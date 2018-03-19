@@ -200,14 +200,90 @@ int BoxFilter(CvBox2D b, IplImage* image) {
 	if (height < image->height / 75) return -1;
 	if (relation < 3) return -1;
 
+	if (width > image->width / 6) return -1;
+	if (height > image->height / 6) return -1;
+
 	//‘ильтры по гистограмме
 
 	return 0;
 }
 
+double inline LineLenght(CvPoint p1, CvPoint p2) {
+
+	return sqrt(pow((p1.x - p2.x), 2) + pow((p1.y - p2.y), 2));
+}
 
 
+int FourPointsContourFilter(CvSeq* contour) {
 
+	CvPoint* v_points;
+	CvSeqReader reader;
+
+	struct LINE_ {
+
+		CvPoint p1;
+		CvPoint p2;
+	} lines[4];
+
+	//‘ильтр по количеству углов
+	if (contour->total != 4) return -1;
+
+	v_points = new CvPoint[contour->total];
+	cvStartReadSeq(contour, &reader, -1);
+
+	//—читываем все точки контура
+	for (int i = 0; i < contour->total; i++) {
+
+		CV_READ_SEQ_ELEM(v_points[i], reader);	
+
+		//printf("points[i].x = %i | points[i].y = %i ;\n", v_points[i].x, v_points[i].y);
+	}
+
+	double len[3];
+	int max_index = 0;
+	//дл€ первой точки i = 0
+	len[0] = LineLenght(v_points[0], v_points[1]);
+	len[1] = LineLenght(v_points[0], v_points[2]);
+	len[2] = LineLenght(v_points[0], v_points[3]);
+
+	max_index = (len[0] > len[1]) ? 1 : 2;
+	max_index = (len[max_index - 1] > len[2]) ? max_index : 3;
+	
+	
+
+	//длина 1
+	//lines[0].p1 = v_points[0];
+	//lines[0].p2 = ;
+	//ширина 1
+	//lines[1].p1 = v_points[0];
+	//lines[1].p2 = ;
+
+
+	//printf("len1 = %.2f\n", len[0]);
+	//printf("len2 = %.2f\n", len[1]);
+	//printf("len3 = %.2f\n", len[2]);
+	//printf("max = %i\n", max_index);
+
+	return 0;
+}
+
+
+void DrawContourPoints(CvSeq* contour, IplImage* image) {
+
+	CvPoint* v_points;
+	CvSeqReader reader;
+
+	v_points = new CvPoint[contour->total];
+	cvStartReadSeq(contour, &reader, -1);
+
+	//—читываем все точки контура
+	for (int i = 0; i < contour->total; i++) {
+
+		CV_READ_SEQ_ELEM(v_points[i], reader);
+
+		cvDrawCircle(image, v_points[i], 2, CV_RGB(255, 0, 0), 2, 8, 0);
+	}
+}
 
 
 
@@ -253,7 +329,17 @@ void FindZebraContour(IplImage* image) {
 		CvRect rect = cvBoundingRect(i, 0);
 		//cvDrawRect(image, CvPoint(rect.x, rect.y), CvPoint(rect.x + rect.width, rect.y + rect.height), CV_RGB(0, 255, 0), 1, 8, 0);
 
+		retHulls = cvApproxPoly(retHulls, sizeof(CvContour), storage, CV_POLY_APPROX_DP, 10, 1);
+
 		
+		//if (retHulls->total != 4) continue;
+		//printf("retHulls->total = %i\n", retHulls->total);
+
+		if (FourPointsContourFilter(retHulls) == -1) continue;
+
+		DrawContourPoints(retHulls, image);
+
+
 		cvDrawContours(image, retHulls, CV_RGB(0, 0, 255), CV_RGB(0, 0, 255), 0, 1, 8);
 
 		CvPoint kern4[120];
@@ -268,7 +354,7 @@ void FindZebraContour(IplImage* image) {
 
 	//**************************************************************
 	double resize = 1.0;
-	if (image->width > 1920) resize = 0.75;
+	if (image->width > 1280) resize = 0.5;
 	if (image->width < 720) resize = 2.0;
 	if (image->width < 400) resize = 4.0;
 	
