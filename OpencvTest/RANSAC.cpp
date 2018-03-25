@@ -51,7 +51,7 @@ SLine LineFitRANSAC(
 	int s = 2;//number of points required by the model
 	int N = (int)ceilf(log(1 - p) / log(1 - pow(1 - e, s)));//number of independent trials
 
-	N = N * 10;//----------
+	//N = N * 10;//----------
 
 	std::vector<SLine> lineCandidates;
 	std::vector<int> ptOnLine(nzPoints.size());//is inlier

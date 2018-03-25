@@ -27,6 +27,9 @@
     <ClInclude Include="Zebra.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
+    <ClInclude Include="LicensePlateDetector.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -39,6 +42,9 @@
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="Zebra.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="LicensePlateDetector.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>

@@ -200,8 +200,8 @@ int BoxFilter(CvBox2D b, IplImage* image) {
 	if (height < image->height / 75) return -1;
 	if (relation < 3) return -1;
 
-	if (width > image->width / 6) return -1;
-	if (height > image->height / 6) return -1;
+	//if (width > image->width / 6) return -1;
+	//if (height > image->height / 6) return -1;
 
 	//Фильтры по гистограмме
 
@@ -281,7 +281,7 @@ void DrawContourPoints(CvSeq* contour, IplImage* image) {
 
 		CV_READ_SEQ_ELEM(v_points[i], reader);
 
-		cvDrawCircle(image, v_points[i], 2, CV_RGB(255, 0, 0), 2, 8, 0);
+		cvDrawCircle(image, v_points[i], 2, CV_RGB(255, 0, 0), 1, 8, 0);
 	}
 }
 
@@ -340,7 +340,7 @@ void FindZebraContour(IplImage* image) {
 		DrawContourPoints(retHulls, image);
 
 
-		cvDrawContours(image, retHulls, CV_RGB(0, 0, 255), CV_RGB(0, 0, 255), 0, 1, 8);
+		//cvDrawContours(image, retHulls, CV_RGB(0, 0, 255), CV_RGB(0, 0, 255), 0, 1, 8);
 
 		CvPoint kern4[120];
 		FindLines2(retHulls, kern4, 1);

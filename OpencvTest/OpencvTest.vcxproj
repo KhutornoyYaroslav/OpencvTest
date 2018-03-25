@@ -156,12 +156,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="LicensePlateDetector.h" />
     <ClInclude Include="RANSAC.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="Zebra.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="LicensePlateDetector.cpp" />
     <ClCompile Include="OpencvTest.cpp" />
     <ClCompile Include="RANSAC.cpp" />
     <ClCompile Include="stdafx.cpp">
