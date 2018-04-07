@@ -18,7 +18,14 @@ struct SLine
 	{}
 	cv::Vec4f params;//(cos(t), sin(t), X0, Y0)
 	int numOfValidPoints;
-	double k = 0.0;//////////////
+
+	float A = 0.0;
+	float B = 0.0;
+	float C = 0.0;
+
+	float x0 = params[2];
+	float y0 = params[3];
+	float k = atan(params[1] / params[0]);
 };
 
 

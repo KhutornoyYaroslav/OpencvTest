@@ -84,7 +84,7 @@ SLine LineFitRANSAC(
 		a *= scale;
 		b *= scale;
 		c *= scale;
-		//float k = a / b; // ----------------
+
 		//count inliers
 		int numOfInliers = 0;
 		for (size_t i = 0; i < nzPoints.size(); ++i)
@@ -101,7 +101,9 @@ SLine LineFitRANSAC(
 			continue;
 		}
 
-		line.k = k;
+		line.A = a;
+		line.B = b;
+		line.C = c;
 		line.params = TotalLeastSquares(nzPoints, ptOnLine);
 		line.numOfValidPoints = numOfInliers;
 		lineCandidates.push_back(line);

@@ -1,9 +1,15 @@
 #include "stdafx.h"
 #include "LicensePlateDetector.h"
 
+// ****************** GOOD METHODS *****************
 
-LicensePlateDetector::LicensePlateDetector()
-{
+LicensePlateDetector::LicensePlateDetector() {
+
+	for (int i = 0; i < PLATE_TRACKS_VECTOR_SIZE; i++)
+	{
+		PLATE_TRACK *track = new PLATE_TRACK;
+		plateTracks.push_back(track);
+	}
 }
 
 LicensePlateDetector::~LicensePlateDetector()
@@ -76,7 +82,406 @@ IplImage* LicensePlateDetector::ConvertColorImage()
 	}
 }
 
-int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT plate) {
+int LicensePlateDetector::FindTwoLineIntersection(LINE l1, LINE l2, CvPoint2D32f *intersection) {
+
+	float zn = (l1.A * l2.B) - (l1.B * l2.A);
+	if (abs(zn) < 1e-9)
+		return -1;
+
+	float x = -((l1.C * l2.B) - (l1.B * l2.C)) / zn;
+	float y = -((l1.A * l2.C) - (l1.C * l2.A)) / zn;
+
+	intersection->x = x;
+	intersection->y = y;
+	return 0;
+}
+
+int LicensePlateDetector::LineFitRANSAC(double t, double p, double e, int T, std::vector<cv::Point>& nzPoints, LINE *line) {
+
+	LINE tmpLine;
+	int bestLineIdx = 0;
+	int bestLineScore = 0;
+	std::vector<LINE> lineCandidates;
+	std::vector<int> lineValidPoints;
+	cv::RNG rng((uint64)-1);
+	int s = 2;
+	int N = (int)ceilf(log(1 - p) / log(1 - pow(1 - e, s)));
+
+	for (int i = 0; i < N; i++)
+	{
+		int idx1 = (int)rng.uniform(0, (int)nzPoints.size());
+		int idx2 = (int)rng.uniform(0, (int)nzPoints.size());
+		cv::Point p1 = nzPoints[idx1];
+		cv::Point p2 = nzPoints[idx2];
+
+		if (cv::norm(p1 - p2) < t) continue;
+
+		//line equation ->  (y1 - y2)X + (x2 - x1)Y + x1y2 - x2y1 = 0 
+		double a = static_cast<double>(p1.y - p2.y);
+		double b = static_cast<double>(p2.x - p1.x);
+		double c = static_cast<double>(p1.x*p2.y - p2.x*p1.y);
+
+		//normalize them
+		double scale = 1.0 / sqrt(a*a + b*b);
+		a *= scale;
+		b *= scale;
+		c *= scale;
+
+		tmpLine.A = a;
+		tmpLine.B = b;
+		tmpLine.C = c;
+
+		//count inliers
+		int numOfInliers = 0;
+		for (size_t i = 0; i < nzPoints.size(); ++i)
+		{
+			cv::Point& p0 = nzPoints[i];
+			double rho = abs(a*p0.x + b*p0.y + c);
+			bool isInlier = rho  < t;
+			if (isInlier) numOfInliers++;
+		}
+
+		if (numOfInliers < T) continue;
+
+		lineCandidates.push_back(tmpLine);
+		lineValidPoints.push_back(numOfInliers);
+	}
+
+	for (size_t i = 0; i < lineCandidates.size(); i++)
+	{
+		if (lineValidPoints.at(i) > bestLineScore)
+		{
+			bestLineIdx = i;
+			bestLineScore = lineValidPoints.at(i);
+		}
+	}
+
+	if (lineCandidates.empty()) {
+
+		return -1;
+	}
+	else {
+
+		*line = lineCandidates[bestLineIdx];
+		lineCandidates.clear();
+		lineValidPoints.clear();
+		return 0;
+	}
+}
+
+int LicensePlateDetector::FindPlateROI(CvRect ROI, CvSize minSize, CvSize maxSize, double scaleFactor, double xboundScale, double yboundScale) {
+
+	IplImage* grayImage = 0;
+	std::vector<cv::Rect> symbols;
+	PLATE_OBJECT plateRoi;
+	int x_offset = 0;
+	int y_offset = 0;
+
+	if (this->colorImage == NULL) {
+
+		printf("Error while executing FindPlateROI(). There is no source color Image.\n");
+		return -1;
+	}
+
+	if (plateClassifierCascade.empty()) {
+
+		printf("Error while executing FindPlateROI(). Classifier cascade is not loaded.\n");
+		return -1;
+	}
+
+	if (xboundScale < 0) {
+
+		printf("Warning while executing FindPlateROI(). Argument xboundScale is less than 0. Its will set to 0,01.\n");
+		xboundScale = 0.01;
+	}
+
+	if (xboundScale > 0.2) {
+
+		printf("Warning while executing FindPlateROI(). Argument xboundScale is too high. Its will set to 0,2.\n");
+		xboundScale = 0.2;
+	}
+
+	if (yboundScale < 0) {
+
+		printf("Warning while executing FindPlateROI(). Argument yboundScale is less than 0. Its will set to 0,05.\n");
+		yboundScale = 0.05;
+	}
+
+	if (yboundScale > 0.4) {
+
+		printf("Warning while executing FindPlateROI(). Argument yboundScale is too high. Its will set to 0,4.\n");
+		yboundScale = 0.4;
+	}
+
+	if (scaleFactor < 1.1) {
+
+		printf("Warning while executing FindPlateROI(). Argument scaleFactor is less than 1,1. Its will set to 1,1.\n");
+		scaleFactor = 1.1;
+	}
+
+	if (scaleFactor > 2.0) {
+
+		printf("Warning while executing FindPlateROI(). Argument scaleFactor is morse than 2,0. Its will set to 2,0.\n");
+		scaleFactor = 2.0;
+	}
+
+	if (minSize.height <= 0 || minSize.width <= 0) {
+
+		printf("Error while executing FindPlateROI(). Argument minWnd is less or equal zero.\n");
+		return -1;
+	}
+
+	if (maxSize.height <= 0 || maxSize.width <= 0) {
+
+		printf("Error while executing FindPlateROI(). Argument maxWnd is less or equal zero.\n");
+		return -1;
+	}
+
+	if (ROI.x + ROI.width > this->colorImage->width || ROI.width < 1 || ROI.x < 0) {
+
+		printf("Error while executing FindPlateROI(). ROI width is out of frame border.\n");
+		return -1;
+	}
+
+	if (ROI.y + ROI.height > this->colorImage->height || ROI.height < 1 || ROI.y < 0) {
+
+		printf("Error while executing FindPlateROI(). ROI height is out of frame border.\n");
+		return -1;
+	}
+
+	grayImage = cvCreateImage(cvGetSize(this->colorImage), IPL_DEPTH_8U, 1);
+	cvConvertImage(this->colorImage, grayImage, CV_BGR2GRAY);
+
+	//Detect plates
+	cvSetImageROI(grayImage, ROI);
+	//----- Debug code -----
+	cvDrawRect(this->colorImage, CvPoint(ROI.x, ROI.y), CvPoint(ROI.x + ROI.width, ROI.y + ROI.height), CV_RGB(0, 200, 255), 5, 8, 0);
+	//CvFont font;
+	//cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX, 2.0, 2.0, 0, 2, CV_AA);
+	//cvPutText(this->colorImage, "Region of interest", CvPoint(ROI.x + 20, ROI.y - 20), &font, CV_RGB(0, 200, 255));
+	//--- End Debug code ---
+	cv::Mat matImage = cv::cvarrToMat(grayImage);
+	plateClassifierCascade.detectMultiScale(matImage, symbols, scaleFactor, 3, 0, minSize, maxSize); // parameters
+	cvResetImageROI(grayImage);
+
+	if (symbols.size() == 0) {
+
+		cvReleaseImage(&grayImage);
+		symbols.clear();
+		return -1;
+	}
+
+	for (auto& p : symbols) {
+
+		x_offset = static_cast<int>((static_cast<double>(p.width) * xboundScale));
+		y_offset = static_cast<int>((static_cast<double>(p.height) * yboundScale));
+
+		plateRoi.plateROIleftX = ROI.x + p.x - x_offset;
+		plateRoi.plateROIleftY = ROI.y + p.y - y_offset;
+		plateRoi.plateROIwidth = p.width + 2 * x_offset;
+		plateRoi.plateROIheight = p.height + 2 * y_offset;
+		
+		if (plateRoi.plateROIleftX < 0 || plateRoi.plateROIleftY < 0 ||
+			plateRoi.plateROIleftX + plateRoi.plateROIwidth > this->colorImage->width ||
+			plateRoi.plateROIleftY + plateRoi.plateROIheight > this->colorImage->height) continue;
+
+		cvSetImageROI(grayImage, CvRect(plateRoi.plateROIleftX, plateRoi.plateROIleftY, plateRoi.plateROIwidth, plateRoi.plateROIheight));
+		plateRoi.plateImage = cvCreateImage(CvSize(plateRoi.plateROIwidth, plateRoi.plateROIheight), IPL_DEPTH_8U, 1);
+		cvCopy(grayImage, plateRoi.plateImage);
+		cvResetImageROI(grayImage);
+
+
+		//----- Debug code -----
+		cvDrawRect(this->colorImage, CvPoint(plateRoi.plateROIleftX, plateRoi.plateROIleftY),
+		CvPoint(plateRoi.plateROIleftX + plateRoi.plateROIwidth, plateRoi.plateROIleftY + plateRoi.plateROIheight),
+		 CV_RGB(0, 255, 125), 2, 8, 0);
+		//std::cout << "X: " << plateRoi.x_coord << " Y: " << plateRoi.y_coord 
+		//	<< " Width: " << plateRoi.width << " Height: " << plateRoi.height << std::endl;
+		//IplImage *scaleimg = cvCreateImage(cvSize(plateRoi.width * 4, plateRoi.height * 4), plateRoi.plateImage->depth, plateRoi.plateImage->nChannels);
+		//cvResize(plateRoi.plateImage, scaleimg);
+		//cvShowImage("plate ROI", scaleimg);
+		//printf("plateRoiImage sizes: w = %i, h = %i.\n", plateRoi.plateImage->width, plateRoi.plateImage->height);
+		//--- End Debug code ---
+
+		this->plateVector.push_back(plateRoi);
+	}
+
+	cvReleaseImage(&grayImage);
+	symbols.clear();
+	return 0;
+}
+
+int LicensePlateDetector::InitClassifierCascade(const char* filename) {
+
+	bool isload = plateClassifierCascade.load(filename);
+	if (isload == false)
+	{
+		printf("Error while InitClassifierCascade(). No xml-file was found.\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+int LicensePlateDetector::FindVanishPointRANSAC(std::vector<LINE> lines, CvPoint2D32f *resultPoint, float radius) {
+
+	int result_index = 0;
+	int number_max = 0;
+	int number = 0;
+	std::vector<CvPoint2D32f> intersections;
+
+	if (lines.empty()) return -1;
+	if (FindLinesIntersections(lines, &intersections) < 0) return -1;
+
+	for (int i = 0; i < intersections.size(); i++) {
+
+		float x1 = intersections.at(i).x;
+		float y1 = intersections.at(i).y;
+		number = 0;
+
+		for (int j = 0; j < intersections.size(); j++) {
+
+			if (j == i) continue;
+
+			float x2 = intersections.at(j).x;
+			float y2 = intersections.at(j).y;
+
+			float dist = sqrt(pow((x1 - x2), 2) + pow((y1 - y2), 2));
+			if (dist < radius)
+				number++;
+		}
+
+		if (number > number_max) {
+
+			result_index = i;
+			number_max = number;
+		}
+	}
+
+	if (number_max == 0) return -1;
+
+	resultPoint->x = intersections.at(result_index).x;
+	resultPoint->y = intersections.at(result_index).y;
+	intersections.clear();
+
+	return 0;
+}
+
+int LicensePlateDetector::FindVanishPointMinDistances(std::vector<LINE> lines, CvPoint2D32f *resultPoint) {
+
+	float sum = 0.0;
+	float min_sum = 10000000.0;
+	int result_index = 0;
+	std::vector<CvPoint2D32f> intersections;
+
+	if (lines.empty()) return -1;
+	if (FindLinesIntersections(lines, &intersections) < 0) return -1;
+
+	for (int i = 0; i < intersections.size(); i++) {
+
+		float x = intersections.at(i).x;
+		float y = intersections.at(i).y;
+		sum = 0.0;
+
+		for (int j = 0; j < lines.size(); j++) {
+
+			float A = lines.at(j).A;
+			float B = lines.at(j).B;
+			float C = lines.at(j).C;
+
+			if (A == 0.0 && B == 0.0) continue;
+
+			float dist = abs(A*x + B*y + C) / sqrt(A*A + B*B);
+
+			dist = dist / 1000;
+			sum = sum + dist;
+		}
+
+		if (sum < min_sum) {
+
+			min_sum = sum;
+			result_index = i;
+		}
+	}
+
+	resultPoint->x = intersections.at(result_index).x;
+	resultPoint->y = intersections.at(result_index).y;
+	intersections.clear();
+
+	return 0;
+}
+
+int LicensePlateDetector::PrintPlateHorizontalLines(PLATE_OBJECT plate, int leftXcoord, int rightXcoord) {
+
+	CvPoint p1;
+	CvPoint p2;
+
+	if (this->colorImage == NULL) {
+
+		printf("Error while showing plate horizontal lines. There is no color Image.\n");
+		return -1;
+	}
+
+	if (plate.horLinesCount == 0) {
+
+		printf("Error while showing plate horizontal lines. There is no horizontal lines.\n");
+		return -1;
+	}
+
+	if (leftXcoord < 0) leftXcoord = 0;
+	if (rightXcoord > this->colorImage->width) rightXcoord = this->colorImage->width;
+
+	for (int i = 0; i < plate.horLinesCount; i++) {
+
+		p1.x = leftXcoord;
+		p1.y = static_cast<int>(plate.horLines[i].y(leftXcoord));
+
+		p2.x = rightXcoord;
+		p2.y = static_cast<int>(plate.horLines[i].y(static_cast<float>(rightXcoord)));
+
+		cvLine(this->colorImage, p1, p2, CV_RGB(0, 0, 255), 2, CV_AA, 0);
+	}
+
+	return 0;
+}
+
+int LicensePlateDetector::PrintPlateVanishHorLine(PLATE_OBJECT plate, int leftXcoord, int rightXcoord) {
+
+	CvPoint p1;
+	CvPoint p2;
+
+	if (this->colorImage == NULL) {
+
+		printf("Error while showing plate horizontal vanish line. There is no color Image.\n");
+		return -1;
+	}
+
+	if (plate.isHorVanishLine == false) {
+
+		printf("Error while showing plate horizontal vanish line. There is no vanish line.\n");
+		return -1;
+	}
+
+	if (leftXcoord < 0) leftXcoord = 0;
+	if (rightXcoord > this->colorImage->width) rightXcoord = this->colorImage->width;
+
+	p1.x = leftXcoord;
+	p1.y = static_cast<int>(plate.horVanishLine.y(leftXcoord));
+
+	p2.x = rightXcoord;
+	p2.y = static_cast<int>(plate.horVanishLine.y(static_cast<float>(rightXcoord)));
+
+	cvLine(this->colorImage, p1, p2, CV_RGB(250, 50, 50), 2, CV_AA, 0);
+
+	return 0;
+}
+
+// ****************** METHODS IN PROCESS *****************
+
+
+int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT *plate) {
+
+	std::vector<LINE> horizontalLineVector;// NEW
 
 	IplImage* binaryImage = 0;
 	CvMemStorage* contours_storage = 0;
@@ -85,13 +490,13 @@ int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT plate) {
 	CvSeqReader seq_reader;
 	CvMat kernel_matrix;
 	LINE line;
-	SLine ransacLine;
+	//SLine ransacLine;
 	float sharp_kernel[9] = { -0.1f, -0.1f, -0.1f, -0.1f, 2.0f, -0.1f, -0.1f, -0.1f, -0.1f }; // parameter
 
 	//Cleaning and initing
 	horizontalLineVector.clear();
 	points.clear();	
-	binaryImage = cvCloneImage(plate.plateImage);
+	binaryImage = cvCloneImage(plate->plateImage);
 
 	//Image sharpening, adaptive treshloding, x-axis smoothing and canny edge detector
 	kernel_matrix = cvMat(3, 3, CV_32FC1, sharp_kernel);
@@ -104,15 +509,11 @@ int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT plate) {
 	//Contours finding
 	contours_storage = cvCreateMemStorage(0);
 	cvFindContours(binaryImage, contours_storage, &contours, sizeof(CvContour), 0, CV_CHAIN_APPROX_NONE, cvPoint(0, 0));
-	
-	//int total_max = -10;
-	//for (CvSeq* current = contours; current != NULL; current = current->h_next) {
-	//	
-	//	if (current->total > total_max) total_max = current->total;
-	//}
-	int valid_max = -10;
-	
+
 	for (CvSeq* current = contours; current != NULL; current = current->h_next) {
+
+		//TODO: что-то придумать здесь нормальное
+		if (current->total < 105) continue; // parameter 185
 
 		//Reading of all points from current contour and saving its to vector.
 		points.clear();
@@ -121,41 +522,32 @@ int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT plate) {
 
 			cv::Point point;
 			CV_READ_SEQ_ELEM(point, seq_reader);
+			point.x = point.x + plate->plateROIleftX;//NEW
+			point.y = point.y + plate->plateROIleftY;//NEW
 			points.push_back(point);
 		}
-		//printf("points size = %i\n", points.size());
-		
-		//Filter short contours	
-		//if (current->total < (total_max - (total_max/4))) continue; // parameter
-		if (current->total < 100) continue; // parameter 185
 
 		//Find RANSAC fitting lines 
-		ransacLine = LineFitRANSAC(1.5, 0.9, 0.9, current->total * 0.8, points); // parameter
-		if (ransacLine.params[0] == -1 ||
-			ransacLine.params[1] == -1 ||
-			ransacLine.params[2] == -1 ||
-			ransacLine.params[3] == -1) continue;		
+		if (LineFitRANSAC(1.5, 0.85, 0.85, current->total * 0.85, points, &line) < 0) continue; // parameter
 
-		//Push line to vector
-		line.numOfValidPoints = ransacLine.numOfValidPoints;
-		line.params = ransacLine.params;
 		horizontalLineVector.push_back(line);
 	}
 	
+	if (horizontalLineVector.size() == 0) return -1;
+	printf("horizontalLineVector.size() = %i\n", horizontalLineVector.size());
 
-	if (this->horizontalLineVector.size() == 0) return -1;
-
+	if (this->FilterPlateHorizontalLines(horizontalLineVector, plate) < 0) return -1;
+	
 	return 0;
 }
 
-int LicensePlateDetector::FilterPlateHorizontalLines(PLATE_OBJECT* plate) {
+int LicensePlateDetector::FilterPlateHorizontalLines(std::vector<LINE> lines, PLATE_OBJECT* plate) {
 
 	IplImage* binaryImage = 0;
-	float x = 0.0;
-	float ki = 0.0;
+	float x_mid = 0.0;
 	float yi = 0.0;
-	float ky = 0.0;
 	float yy = 0.0;
+
 	float dist = 0.0;
 	float angle = 0.0;
 	float min_angle = 100.0;
@@ -169,54 +561,64 @@ int LicensePlateDetector::FilterPlateHorizontalLines(PLATE_OBJECT* plate) {
 	int white_count = 0;
 	int black_count = 0;
 
-	if (this->horizontalLineVector.size() == 0) {
+	if (lines.size() < 2) {
 	
-		printf("Error while filtering plate horizontal lines. No lines is found.\n");
+		printf("Error while filtering plate horizontal lines. Number of input lines is less than two.\n");
 		return -1;
 	}
 
 	//Cleaning and init
-	horizontalLineCandidateVector.clear();
-	//this->horizontalLineVector2.clear();////////
-	x = static_cast<float>(this->colorImage->width / 2);
+	x_mid = static_cast<float>(this->colorImage->width / 2);
 	binaryImage = cvCloneImage(plate->plateImage);
 
 	//Get best line pair from all lines
-	for (int i = 0; i < this->horizontalLineVector.size(); i++) {		
-		for (int y = 0; y < this->horizontalLineVector.size(); y++) {
+	for (int i = 0; i < lines.size(); i++) {	
+
+		line_i = lines.at(i);
+		yi = (line_i.k() * x_mid) + line_i.b();
+
+		for (int y = 0; y < lines.size(); y++) {
 
 			if (y <= i) continue;
 
-			line_i = this->horizontalLineVector.at(i);
-			line_y = this->horizontalLineVector.at(y);
+			line_y = lines.at(y);
+			yy = line_y.k() * x_mid + line_y.b();
 
-			ki = atan(line_i.params[1] / line_i.params[0]);
-			yi = ki * (x - line_i.params[2]) + line_i.params[3]; 
-
-			ky = atan(line_y.params[1] / line_y.params[0]);
-			yy = ky * (x - line_y.params[2]) + line_y.params[3];
-
-			dist = abs(abs(yy - yi) - this->probablyWidth);
-			angle = abs(ky - ki);
+			//dist = abs(abs(yy - yi) - this->probablyWidth); //TODO: заменить тут надо этот пробабли ширину
+			double probablyWidth = static_cast<double>(plate->plateWidth)  * 0.21538461f;
+			dist = abs(abs(line_i.b() - line_y.b()) - probablyWidth);
+			angle = abs(line_i.k() - line_y.k());
 			
+
 			//Coarse filter
-			if (dist < 10.0 && angle < 0.01) { // parameter
+			if (dist < 8.0 && angle < 0.01) { // parameter
 
-				float y_max = line_y.params[3];
-				float y_min = line_i.params[3];
-				if (line_i.params[3] > line_y.params[3]) {
+				//float y_max = line_y.params[3];
+				//float y_min = line_i.params[3];
+				//if (line_i.params[3] > line_y.params[3]) {
 
-					y_max = line_i.params[3];
-					y_min = line_y.params[3];
+					//y_max = line_i.params[3];
+					//y_min = line_y.params[3];
+				//}
+
+				/*
+				float y_max = line_y.b();
+				float y_min = line_i.b();
+
+				if (line_i.b() > line_y.b()) {
+
+					y_max = line_i.b();
+					y_min = line_y.b();
 				}
-				
+
+
 				blacks = 0;
 				whites = 0;
 				white_count = 0;
 				black_count = 0;
 
 				//Soft filter			
-				for (float y_0 = y_min; y_0 < y_max; y_0++) {			
+				for (double y_0 = y_min; y_0 < y_max; y_0++) {			
 
 					whites = 0;
 					blacks = 0;
@@ -224,7 +626,8 @@ int LicensePlateDetector::FilterPlateHorizontalLines(PLATE_OBJECT* plate) {
 					//for (int xx = 0; xx < this->binaryImage->width; xx++) { // parameter
 					for (int xx = binaryImage->width / 8; xx < binaryImage->width - binaryImage->width / 8; xx++) {
 
-						int yy = static_cast<int>(ki * (static_cast<float>(xx) - line_i.params[2]) + y_0);					
+						//int yy = static_cast<int>(ki * (static_cast<float>(xx) - line_i.params[2]) + y_0);	
+						int yy = static_cast<int>(ki * static_cast<double>(xx) + y_0);
 						if (yy > binaryImage->height || yy < 0) {
 							
 							whites = 0;
@@ -245,9 +648,10 @@ int LicensePlateDetector::FilterPlateHorizontalLines(PLATE_OBJECT* plate) {
 						black_count++;					
 				}
 
+			
 				
-				
-				if (angle < 0.01 && dist < 10.0 && black_count < black_min) { // parameter
+				//if (angle < 0.01 && dist < 10.0 && black_count < black_min) { // parameter
+				if (angle < 0.01 && dist < 5.0) {
 
 					white_max = white_count;
 					black_min = black_count;
@@ -257,104 +661,32 @@ int LicensePlateDetector::FilterPlateHorizontalLines(PLATE_OBJECT* plate) {
 					tmp_line_candidate.line2 = line_y;
 					//horizontalLineCandidateVector.push_back(tmp_line_candidate);
 
-					printf("white_count = %i. black_count = %i\n", white_count, black_count);
+					//printf("white_count = %i. black_count = %i\n", white_count, black_count);
 					printf("dists[%i][%i].dist = %.5f | angle = %.5f\n", i, y, dist, angle);
-
-					this->horizontalLineVector2.push_back(line_i);
-					this->horizontalLineVector2.push_back(line_y);	
-
 					count = count + 2;
 				}				
-				
+				*/
+
+				tmp_line_candidate.line1 = line_i;
+				tmp_line_candidate.line2 = line_y;
 			}		
 		}
 	}
 
-	plate->lineHcount = count;
-	plate->lineH[0] = tmp_line_candidate.line1;
-	plate->lineH[1] = tmp_line_candidate.line2;
+	plate->horLines[0] = tmp_line_candidate.line1;
+	plate->horLines[1] = tmp_line_candidate.line2;
+	plate->horLinesCount = 2;
 
-	if (count != 0) { //TODO:
+	//TODO: подумать алгоритм выбора итоговой ваниш лайн. Может среднеарифметическое?
 
-		if(tmp_line_candidate.line1.params[3] > tmp_line_candidate.line2.params[3]) 
-			plate->vanishLineH = tmp_line_candidate.line1;
-		else 
-			plate->vanishLineH = tmp_line_candidate.line2;
-		
-	}
+	if (plate->horLines[0].b() > plate->horLines[1].b()) 
+		plate->horVanishLine = plate->horLines[0];
+	else
+		plate->horVanishLine = plate->horLines[1];
 
-	//this->horizontalLineVector2.push_back(tmp_line_candidate.line1);
-	//this->horizontalLineVector2.push_back(tmp_line_candidate.line2);
-	printf("count of good line pairs= %i\n", count);
-	return 0;
-}
+	plate->isHorVanishLine = true;
 
-int LicensePlateDetector::PrintPlateHorizontalLines(PLATE_OBJECT plate) {
 
-	LINE tmp_line;
-
-	if (this->colorImage == NULL) {
-
-		printf("Error while showing plate horizontal lines. There is no color Image.\n");
-		return -1;
-	}
-
-	for (int i = 0; i < plate.lineHcount; i++) {
-
-		float sin = plate.lineH[i].params[1];
-		float cos = plate.lineH[i].params[0];
-		float k = atan(sin / cos);
-
-		float x0 = plate.lineH[i].params[2] + plate.x_coord;
-		float y0 = plate.lineH[i].params[3] + plate.y_coord;
-
-		float x = 0;
-		float y = k * (x - x0) + y0;
-		tmp_line.p1.x = static_cast<int>(x);
-		tmp_line.p1.y = static_cast<int>(y);
-
-		x = this->colorImage->width;
-		y = k * (x - x0) + y0;
-		tmp_line.p2.x = static_cast<int>(x);
-		tmp_line.p2.y = static_cast<int>(y);
-
-		cvLine(this->colorImage, tmp_line.p1, tmp_line.p2, CV_RGB(255, 0, 55), 2, CV_AA, 0);
-	}
-
-	return 0;
-}
-
-int LicensePlateDetector::PrintPlateVanishHorLine(PLATE_OBJECT plate) {
-
-	LINE tmp_line;
-
-	if (this->colorImage == NULL) {
-
-		printf("Error while showing plate horizontal lines. There is no color Image.\n");
-		return -1;
-	}
-
-	if (plate.vanishLineH.params[0] == -1) return -1;
-
-	float sin = plate.vanishLineH.params[1];
-	float cos = plate.vanishLineH.params[0];
-	float k = atan(sin / cos);
-
-	float x0 = plate.vanishLineH.params[2] + plate.x_coord;
-	float y0 = plate.vanishLineH.params[3] + plate.y_coord;
-
-	float x = 0;
-	float y = k * (x - x0) + y0;
-	tmp_line.p1.x = static_cast<int>(x);
-	tmp_line.p1.y = static_cast<int>(y);
-
-	x = this->colorImage->width;
-	y = k * (x - x0) + y0;
-	tmp_line.p2.x = static_cast<int>(x);
-	tmp_line.p2.y = static_cast<int>(y);
-
-	cvLine(this->colorImage, tmp_line.p1, tmp_line.p2, CV_RGB(255, 0, 55), 2, CV_AA, 0);
-	
 	return 0;
 }
 
@@ -376,7 +708,7 @@ int LicensePlateDetector::RotateGrayImage(double angle) {
 	return 0;
 }
 
-int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT plate) {
+int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT *plate) {
 
 	int delta = 0;
 	int delta_max = -100;
@@ -384,14 +716,10 @@ int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT plate) {
 	int x_min = 0;
 	int offset = 0;
 	int* arr = 0;
-	double offset_koef = 3;
+	double offset_koef = 4; // чем меньше, тем ближе к краям стартовая точка (меньше анализируемая область)
 	double koef = 4;
 
-	//Преобразуем исходное изображение в оттенки серого
-	//IplImage* gray = cvCreateImage(cvGetSize(this->colorImage), IPL_DEPTH_8U, 1);
-	//cvConvertImage(this->colorImage, gray, CV_BGR2GRAY);
-	IplImage* gray = cvCloneImage(plate.plateImage);
-	//Предобработка изображения
+	IplImage* gray = cvCloneImage(plate->plateImage);
 	cvErode(gray, gray, 0, 2);
 	cvDilate(gray, gray, 0, 2);
 
@@ -430,10 +758,10 @@ int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT plate) {
 		}
 	}
 
-	this->probablyWidth = static_cast<double>(abs(x_max - x_min)) / 520.0f * 112.0f;
-	printf("this->probablyWidth = %.2f\n", this->probablyWidth);
-	//cvLine(this->colorImage, CvPoint(x_min, 0), CvPoint(x_min, gray->height), CV_RGB(55, 155, 55), 1, CV_AA, 0);
-	//cvLine(this->colorImage, CvPoint(x_max, 0), CvPoint(x_max, gray->height), CV_RGB(55, 155, 55), 1, CV_AA, 0);
+	plate->plateWidth = abs(x_max - x_min);
+
+	//cvLine(this->colorImage, CvPoint(x_min + plate->plateROIleftX, 0 + plate->plateROIleftY), CvPoint(x_min + plate->plateROIleftX, gray->height + plate->plateROIleftY), CV_RGB(0, 255, 0), 5, CV_AA, 0);
+	//cvLine(this->colorImage, CvPoint(x_max + plate->plateROIleftX, 0 + plate->plateROIleftY), CvPoint(x_max + plate->plateROIleftX, gray->height + plate->plateROIleftY), CV_RGB(0, 255, 0), 5, CV_AA, 0);
 
 	//Освобождаем ресурсы
 	cvReleaseImage(&gray);
@@ -441,160 +769,8 @@ int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT plate) {
 	return 0;
 }
 
-int LicensePlateDetector::InitClassifierCascade(const char* filename) {
 
-	bool isload = plateClassifierCascade.load(filename);
-	if (isload == false)
-	{
-		printf("Error while InitClassifierCascade(). No xml-file was found.\n");
-		return -1;
-	}
 
-	return 0;
-}
-
-int LicensePlateDetector::FindPlateROI(CvRect ROI, CvSize minSize, CvSize maxSize, double scaleFactor, double xboundScale, double yboundScale) {
-
-	IplImage* grayImage = 0;
-	std::vector<cv::Rect> symbols;
-	PLATE_OBJECT plateRoi;
-	int x_offset = 0;
-	int y_offset = 0;
-
-	if (this->colorImage == NULL) {
-
-		printf("Error while executing FindPlateROI(). There is no source color Image.\n");
-		return -1;
-	}
-
-	if (plateClassifierCascade.empty()) {
-
-		printf("Error while executing FindPlateROI(). Classifier cascade is not loaded.\n");
-		return -1;
-	}
-	
-	if (xboundScale < 0) {
-
-		printf("Warning while executing FindPlateROI(). Argument xboundScale is less than 0. Its will set to 0,01.\n");
-		xboundScale = 0.01;
-	}
-
-	if (xboundScale > 0.2) {
-
-		printf("Warning while executing FindPlateROI(). Argument xboundScale is too high. Its will set to 0,2.\n");
-		xboundScale = 0.2;
-	}
-
-	if (yboundScale < 0) {
-
-		printf("Warning while executing FindPlateROI(). Argument yboundScale is less than 0. Its will set to 0,05.\n");
-		yboundScale = 0.05;
-	}
-
-	if (yboundScale > 0.4) {
-
-		printf("Warning while executing FindPlateROI(). Argument yboundScale is too high. Its will set to 0,4.\n");
-		yboundScale = 0.4;
-	}
-
-	if (scaleFactor < 1.1) {
-
-		printf("Warning while executing FindPlateROI(). Argument scaleFactor is less than 1,1. Its will set to 1,1.\n");
-		scaleFactor = 1.1;
-	}
-
-	if (scaleFactor > 2.0) {
-
-		printf("Warning while executing FindPlateROI(). Argument scaleFactor is morse than 2,0. Its will set to 2,0.\n");
-		scaleFactor = 2.0;
-	}
-
-	if (minSize.height <= 0 || minSize.width <= 0 ) {
-
-		printf("Error while executing FindPlateROI(). Argument minWnd is less or equal zero.\n");
-		return -1;
-	}
-
-	if (maxSize.height <= 0 || maxSize.width <= 0) {
-
-		printf("Error while executing FindPlateROI(). Argument maxWnd is less or equal zero.\n");
-		return -1;
-	}
-
-	if (ROI.x + ROI.width > this->colorImage->width || ROI.width < 1 || ROI.x < 0) {
-
-		printf("Error while executing FindPlateROI(). ROI width is out of frame border.\n");
-		return -1;
-	}
-
-	if (ROI.y + ROI.height > this->colorImage->height || ROI.height < 1 || ROI.y < 0) {
-
-		printf("Error while executing FindPlateROI(). ROI height is out of frame border.\n");
-		return -1;
-	}
-
-	grayImage = cvCreateImage(cvGetSize(this->colorImage), IPL_DEPTH_8U, 1);
-	cvConvertImage(this->colorImage, grayImage, CV_BGR2GRAY);
-
-	//Detect plates
-	cvSetImageROI(grayImage, ROI);
-	//----- Debug code -----
-	cvDrawRect(this->colorImage, CvPoint(ROI.x, ROI.y), CvPoint(ROI.x + ROI.width, ROI.y + ROI.height), CV_RGB(0, 200, 255), 15, 8, 0);
-	//CvFont font;
-	//cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX, 2.0, 2.0, 0, 2, CV_AA);
-	//cvPutText(this->colorImage, "Region of interest", CvPoint(ROI.x + 20, ROI.y - 20), &font, CV_RGB(0, 200, 255));
-	//--- End Debug code ---
-	cv::Mat matImage = cv::cvarrToMat(grayImage);
-	plateClassifierCascade.detectMultiScale(matImage, symbols, scaleFactor, 3, 0, minSize, maxSize); // parameters
-	cvResetImageROI(grayImage);
-
-	if (symbols.size() == 0) {
-		
-		cvReleaseImage(&grayImage);
-		symbols.clear();
-		return -1;
-	}
-
-	for (auto& p : symbols) {
-
-		x_offset = static_cast<int>((static_cast<double>(p.width) * xboundScale));
-		y_offset = static_cast<int>((static_cast<double>(p.height) * yboundScale));
-		
-		plateRoi.x_coord = ROI.x + p.x - x_offset;
-		plateRoi.y_coord = ROI.y + p.y - y_offset;
-		plateRoi.width = p.width + 2 * x_offset;
-		plateRoi.height = p.height + 2 * y_offset;
-		plateRoi.state = PLATE_STATE::inprocess;
-
-		if (plateRoi.x_coord < 0 || plateRoi.y_coord < 0 ||
-			plateRoi.x_coord + plateRoi.width > this->colorImage->width ||
-			plateRoi.y_coord + plateRoi.height > this->colorImage->height) continue;
-
-		cvSetImageROI(grayImage, CvRect(plateRoi.x_coord, plateRoi.y_coord, plateRoi.width, plateRoi.height));	
-		plateRoi.plateImage = cvCreateImage(CvSize(plateRoi.width, plateRoi.height), IPL_DEPTH_8U, 1);
-		cvCopy(grayImage, plateRoi.plateImage);
-		cvResetImageROI(grayImage);
-		
-
-		//----- Debug code -----
-		cvDrawRect(this->colorImage, CvPoint(plateRoi.x_coord, plateRoi.y_coord),
-									 CvPoint(plateRoi.x_coord + plateRoi.width, plateRoi.y_coord + plateRoi.height),
-									 CV_RGB(0, 255, 125), 2, 8, 0);
-		//std::cout << "X: " << plateRoi.x_coord << " Y: " << plateRoi.y_coord 
-		//	<< " Width: " << plateRoi.width << " Height: " << plateRoi.height << std::endl;
-		//IplImage *scaleimg = cvCreateImage(cvSize(plateRoi.width * 4, plateRoi.height * 4), plateRoi.plateImage->depth, plateRoi.plateImage->nChannels);
-		//cvResize(plateRoi.plateImage, scaleimg);
-		//cvShowImage("plate ROI", scaleimg);
-		//printf("plateRoiImage sizes: w = %i, h = %i.\n", plateRoi.plateImage->width, plateRoi.plateImage->height);
-		//--- End Debug code ---
-
-		this->plateVector.push_back(plateRoi);
-	}
-	
-	cvReleaseImage(&grayImage);
-	symbols.clear();
-	return 0;
-}
 
 
 int LicensePlateDetector::ProcessPlates(const char* filename) {
@@ -602,42 +778,512 @@ int LicensePlateDetector::ProcessPlates(const char* filename) {
 	int res = 0;
 
 	res = this->LoadImageFromFile(filename);
-	if (res < 0) return -1;
+	if (res < 0) return -2;
 
 	res = this->InitClassifierCascade("haarcascade_russian_plate_number.xml");
 	if (res < 0) return -1;
 
-	//res = this->FindPlateROI(CvRect(this->colorImage->width / 2,
-	//	this->colorImage->height / 2,
-	//	this->colorImage->width - this->colorImage->width /2  - 1,
-	//	this->colorImage->height - this->colorImage->height / 2 - 1),
-	//	cv::Size(60 * 2, 20 * 2), cv::Size(60 * 3, 20 * 3), 1.2, 0.001, 0.2);
+	this->plateVector.clear(); // TODO:
 
-	res = this->FindPlateROI(CvRect(this->colorImage->width / 3,
-		0,
-		this->colorImage->width / 3 * 2,
-		this->colorImage->height),
-		cv::Size(60 * 0.5, 20 * 0.5), cv::Size(60 * 3, 20 * 3), 1.1, 0.001, 0.2);
-	if (res < 0) return -1;
+	res = this->FindPlateROI(CvRect(700,
+		600,
+		1500,
+		600),
+		cv::Size(60 * 2, 20 * 2), cv::Size(60 * 2, 20 * 2), 1.4, 0.1, 0.1);
 
-	for (int i = 0; i < this->plateVector.size(); i++) {
 
-		if (plateVector.at(i).state == PLATE_STATE::finished) continue;
+	static CvPoint2D32f point;
+	static CvPoint2D32f point2;
 
-		this->FindProbablyPlateWidth(plateVector.at(i));
-		this->FindPlateHorizontalLines(plateVector.at(i));
-		this->FilterPlateHorizontalLines(&plateVector[i]);
-		plateVector.at(i).state = PLATE_STATE::finished;
+	this->ProcessTracks(&plateVector);
+	this->FinishedTrackProccess();
 
-		//this->PrintPlateVanishHorLine(plateVector.at(i));
-		//this->PrintPlateHorizontalLines(plateVector.at(i));
-		//this->ShowImage(plateVector.at(i).plateImage, 5.0);
-		//this->ShowColorImage(0.5);		
+	
+	if(horVanishLines.size() > 0) 
+	{
+		this->FindVanishPointMinDistances(horVanishLines, &point);
+		horVanishLines.clear();
 	}
 
+	
+	if (dirVanishLines.size() > 1)
+	{
+		this->FindVanishPointMinDistances(dirVanishLines, &point2);
+	}
+	
+	if (point.x != 0 && point2.x != 0) {
 
+		CvPoint2D32f W;
+		float focal = ComputeFocalLenght(point, point2, &W);
+		printf("*\n*\n*\n FOCAL = %.3f \n", focal);
+		printf("W.x = %.3f | W.y = %3.f \n *\n*\n*\n", W.x, W.y);
+
+		this->PrintVanishVectors(CvPoint(static_cast<int>(point.x), static_cast<int>(point.y)), 3);
+		this->PrintVanishVectors2(CvPoint(static_cast<int>(point2.x), static_cast<int>(point2.y)), 3);
+		this->PrintVanishVectors3(CvPoint(static_cast<int>(W.x), static_cast<int>(W.y)), 3);
+
+
+	}
+	
+	this->ShowColorImage(0.5);
+	cvWaitKey(0);
+
+
+
+
+	//this->PrintTracks(PLATE_TRACK::STATE::finished);
+	//this->PrintTracks(PLATE_TRACK::STATE::inprocess);
 
 	
 
 	return 0;
+}
+
+
+
+
+
+
+
+
+int LicensePlateDetector::PrintVanishVectors(CvPoint vanishPoint, int number) {
+
+	printf("Vanishing point: x = %i, y = %i.\n", vanishPoint.x, vanishPoint.y);
+
+	// Рисуем результат в виде вектора
+	int num = number + 1;
+	int offset_x = static_cast<int>(this->colorImage->width / 10);
+	int delta_x = static_cast<int>((this->colorImage->width - offset_x) / num);
+	int offset_y = static_cast<int>(this->colorImage->height / 10);
+	int delta_y = static_cast<int>((this->colorImage->height - offset_y) / num);
+
+	for (int x = delta_x; x < delta_x * num; x = x + delta_x) {
+		for (int y = delta_y; y < delta_y * num; y = y + delta_y) {
+
+
+			// Найти уравнение прямой по двум точкам
+			// (y1 - y2)x + (x2 - x1)y + (x1y2 - x2y1) = 0
+			// y = ((y2 - y1)x - (x1y2 - x2y1))/(x2 - x1);
+			int yy = 0;
+			int xx = 0;
+
+			int x2 = vanishPoint.x;
+			int y2 = vanishPoint.y;
+
+			xx= x + 350; // TODO: как едино указать длину стрелки
+			yy = static_cast<int>(((((y2 - y) * xx) - (x * y2 - x2 * y)) / (x2 - x)));
+
+			cvLine(this->colorImage, CvPoint(x, y), CvPoint(xx, yy), CV_RGB(255, 0, 0), 4, CV_AA, 0);
+			cvCircle(this->colorImage, CvPoint(x, y), 8, CV_RGB(255, 100, 0), 5, 8, 0);
+		}
+	}
+
+	return 0;
+}
+
+int LicensePlateDetector::PrintVanishVectors2(CvPoint vanishPoint, int number) {
+
+	printf("Vanishing point: x = %i, y = %i.\n", vanishPoint.x, vanishPoint.y);
+
+	// Рисуем результат в виде вектора
+	int num = number + 1;
+	int offset_x = static_cast<int>(this->colorImage->width / 10);
+	int delta_x = static_cast<int>((this->colorImage->width - offset_x) / num);
+	int offset_y = static_cast<int>(this->colorImage->height / 10);
+	int delta_y = static_cast<int>((this->colorImage->height - offset_y) / num);
+
+	for (int x = delta_x; x < delta_x * num; x = x + delta_x) {
+		for (int y = delta_y; y < delta_y * num; y = y + delta_y) {
+
+
+			// Найти уравнение прямой по двум точкам
+			// (y1 - y2)x + (x2 - x1)y + (x1y2 - x2y1) = 0
+			// y = ((y2 - y1)x - (x1y2 - x2y1))/(x2 - x1);
+			int yy = 0;
+			int xx = 0;
+
+			int x2 = vanishPoint.x;
+			int y2 = vanishPoint.y;
+
+			yy = y + 200;
+			xx = static_cast<int>(((yy - y) * (x2 - x) / (y2 - y)) + x);
+
+			cvLine(this->colorImage, CvPoint(x, y), CvPoint(xx, yy), CV_RGB(0, 255, 0), 4, CV_AA, 0);
+			cvCircle(this->colorImage, CvPoint(x, y), 8, CV_RGB(255, 100, 0), 5, 8, 0);
+		}
+	}
+
+	return 0;
+}
+
+int LicensePlateDetector::PrintVanishVectors3(CvPoint vanishPoint, int number) {
+
+	printf("Vanishing point: x = %i, y = %i.\n", vanishPoint.x, vanishPoint.y);
+
+	// Рисуем результат в виде вектора
+	int num = number + 1;
+	int offset_x = static_cast<int>(this->colorImage->width / 10);
+	int delta_x = static_cast<int>((this->colorImage->width - offset_x) / num);
+	int offset_y = static_cast<int>(this->colorImage->height / 10);
+	int delta_y = static_cast<int>((this->colorImage->height - offset_y) / num);
+
+	for (int x = delta_x; x < delta_x * num; x = x + delta_x) {
+		for (int y = delta_y; y < delta_y * num; y = y + delta_y) {
+
+
+			// Найти уравнение прямой по двум точкам
+			// (y1 - y2)x + (x2 - x1)y + (x1y2 - x2y1) = 0
+			// y = ((y2 - y1)x - (x1y2 - x2y1))/(x2 - x1);
+			int yy = 0;
+			int xx = 0;
+
+			int x2 = vanishPoint.x;
+			int y2 = vanishPoint.y;
+
+			yy = y + 300;
+			xx = static_cast<int>(((yy - y) * (x2 - x) / (y2 - y)) + x);
+
+			cvLine(this->colorImage, CvPoint(x, y), CvPoint(xx, yy), CV_RGB(0, 0, 255), 4, CV_AA, 0);
+			cvCircle(this->colorImage, CvPoint(x, y), 8, CV_RGB(255, 100, 0), 5, 8, 0);
+		}
+	}
+
+	return 0;
+}
+
+
+int LicensePlateDetector::FindLinesIntersections(std::vector<LINE> lines, std::vector<CvPoint2D32f> *result) { //TODO: сделать проверку того, что ваниш лайн есть
+
+	CvPoint2D32f intersection;
+
+	if (lines.empty()) return -1;
+
+	for (int i = 0; i < lines.size(); i++) {
+
+		LINE l1 = lines.at(i);
+
+		for (int j = 0; j < lines.size(); j++) {
+
+			if (j <= i) continue;
+
+			LINE l2 = lines.at(j);
+
+			if (FindTwoLineIntersection(l1, l2, &intersection) >= 0) {
+
+				result->push_back(intersection);
+			}
+		}
+	}
+
+	if (result->empty()) return -1;
+
+	return 0;
+}
+
+
+
+LicensePlateDetector::PLATE_TRACK* LicensePlateDetector::CreateNewTrack() {
+
+	PLATE_TRACK *tmp = 0;
+
+	for (auto t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::ready) 
+		{
+			tmp = t;
+			break;
+		}
+	}
+
+	if (!tmp)
+	{
+		tmp = new PLATE_TRACK;
+		plateTracks.push_back(tmp);
+	}
+		
+	tmp->state = PLATE_TRACK::STATE::inprocess;
+	tmp->id = track_id++;
+
+	return tmp;
+}
+
+int LicensePlateDetector::CleanTrack(PLATE_TRACK* track) {
+
+	if (!track)
+		return -1;
+
+	track->points.clear();
+	track->lost_count = 0;
+	track->state = PLATE_TRACK::STATE::ready;
+
+	return 0;
+}
+
+int LicensePlateDetector::ProcessTracks(std::vector<PLATE_OBJECT> *new_plates) {
+
+	// Заполняем треки новыми точками
+	for (auto t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::ready ||
+			t->state == PLATE_TRACK::STATE::finished) continue;
+
+		PLATE_OBJECT trPlate = t->points.back();
+		float tpx = trPlate.plateROIleftX + (trPlate.plateROIwidth / 2);
+		float tpy = trPlate.plateROIleftY + (trPlate.plateROIheight / 2);
+
+		float weight_min = 100000;
+		int index_min = -1;
+
+		for(int i = 0; i < new_plates->size(); i++)
+		{
+			auto newPlate = new_plates->at(i);
+
+			float npx = newPlate.plateROIleftX + (newPlate.plateROIwidth / 2);
+			float npy = newPlate.plateROIleftY + (newPlate.plateROIheight / 2);
+
+			float dCoord = sqrt((tpx - npx)*(tpx - npx) + (tpy - npy)*(tpy - npy));
+			int dWidth = abs(trPlate.plateWidth - newPlate.plateWidth);
+
+			float compare_weight = (0.8f * dCoord) + (0.2f * dWidth);
+			printf("compare_weight = %.3f\n", compare_weight);
+			if (compare_weight > 100) continue; //TODO: ?
+
+			if (compare_weight < weight_min) 
+			{
+				weight_min = compare_weight;
+				index_min = i;
+			}
+		}
+
+		if(index_min > -1)
+		{
+			new_plates->at(index_min).owner_id = t->id;// TODO ?
+			t->points.push_back(new_plates->at(index_min));
+		}
+		else
+		{
+			t->lost_count++;
+		}
+	}
+
+	// Проверяем, не закончился ли трек
+	for (auto t : plateTracks)
+	{
+		if (t->lost_count > 10) // parameter
+		{
+			if (t->points.size() > 5) // parameter
+			{
+				t->state = PLATE_TRACK::STATE::finished;
+			}
+			else
+			{
+				CleanTrack(t);
+			}			
+		}
+	}
+
+	// Создаем новые треки для точек, которые не подходят остальным трекам
+	for(int i = 0; i < new_plates->size(); i++)
+	{
+		PLATE_OBJECT p = new_plates->at(i);
+
+		if (p.owner_id < 0)
+		{		
+			PLATE_TRACK *new_track = CreateNewTrack();
+
+			if (!new_track)
+			{
+
+			}
+			else
+			{
+				new_track->points.push_back(p);
+			}
+		}
+	}
+
+	
+	return 0;
+}
+
+int LicensePlateDetector::FinishedTrackProccess() {
+
+	for (auto t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::finished)
+		{
+			int count = 0;
+			// Обработка горизонтальных линий
+			for (auto p : t->points)
+			{
+				this->FindProbablyPlateWidth(&p);
+				this->FindPlateHorizontalLines(&p);
+				this->PrintPlateVanishHorLine(p, 0, colorImage->width);
+
+				//if (p.isHorVanishLine && count == 3)
+				//{
+					horVanishLines.push_back(p.horVanishLine);
+					//count = 0;
+				//}
+				//count++;
+					
+			}
+
+			// Обработка линии направления движения
+			std::vector<cv::Point> points;
+			for (auto p : t->points)
+			{
+				int x = static_cast<int>(p.plateROIleftX + p.plateROIwidth / 2);
+				int y = static_cast<int>(p.plateROIleftY + p.plateROIheight / 2);
+				points.push_back(cv::Point(x, y));
+			}
+
+			this->LineFitRANSAC(5.0, 0.6, 0.6, 0.8 * t->points.size(), points, &t->DirectionVanishLine); //TODO: обработку ошибки сделать
+			
+			dirVanishLines.push_back(t->DirectionVanishLine);
+
+			this->PrintTrackDirectionVanishLine(*t, 0, colorImage->height);
+			this->PrintTracks(PLATE_TRACK::STATE::finished);
+			CleanTrack(t);
+		}
+	}
+
+	return 0;
+}
+
+
+
+
+
+
+
+
+
+void LicensePlateDetector::PrintTracks(PLATE_TRACK::STATE state) {
+
+	int p = 0;
+	int r = 0;
+	int f = 0;
+
+	for (auto t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::finished) f++;
+		if (t->state == PLATE_TRACK::STATE::ready) r++;
+		if (t->state == PLATE_TRACK::STATE::inprocess) p++;
+	}
+	printf("***** Tracks info *****\nready = %i | inprocess: %i | finished: %i\n", r, p, f);
+	
+
+	for (auto t : plateTracks)
+	{
+		if (t->state == state)
+		{		
+			for (auto p : t->points)
+			{
+				int x = static_cast<int>(p.plateROIleftX + p.plateROIwidth / 2);
+				int y = static_cast<int>(p.plateROIleftY + p.plateROIheight / 2);
+				cvCircle(this->colorImage, CvPoint(x, y), 8, CV_RGB(255, 100, 0), 5, 8, 0);
+				this->PrintPlateVanishHorLine(p, 0, this->colorImage->width);
+			}
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+int LicensePlateDetector::PrintTrackDirectionVanishLine(PLATE_TRACK track, int topYcoord, int bottomYcoord) {
+
+	CvPoint p1;
+	CvPoint p2;
+
+	if (this->colorImage == NULL) {
+
+		printf("Error while showing track direction vanish line. There is no color Image.\n");
+		return -1;
+	}
+
+	if (track.state != PLATE_TRACK::STATE::finished) {
+
+		printf("Error while showing track direction vanish line. Track is no finished.\n");
+		return -1;
+	}
+
+	if (topYcoord < 0) topYcoord = 0;
+	if (bottomYcoord > this->colorImage->height) bottomYcoord = this->colorImage->height;
+
+	p1.y = topYcoord;
+	p1.x = static_cast<int>(track.DirectionVanishLine.x(p1.y));
+
+	p2.y = bottomYcoord;
+	p2.x = static_cast<int>(track.DirectionVanishLine.x(p2.y));
+
+	cvLine(this->colorImage, p1, p2, CV_RGB(50, 250, 50), 2, CV_AA, 0);
+
+	return 0;
+
+}
+
+
+
+
+
+
+
+
+float LicensePlateDetector::ComputeFocalLenght(CvPoint2D32f hor_Point, CvPoint2D32f dir_Point, CvPoint2D32f *W) {
+
+	CvPoint2D32f p; // principal point on center of image
+	p.x = static_cast<float>(colorImage->width/2);
+	p.y = static_cast<float>(colorImage->height / 2);
+
+	//float dist_hor = sqrt((hor_Point.x - P.x)*(hor_Point.x - P.x) + (hor_Point.y - P.y)*(hor_Point.y - P.y));
+	//float dist_dir = sqrt((dir_Point.x - P.x)*(dir_Point.x - P.x) + (dir_Point.y - P.y)*(dir_Point.y - P.y));
+	//float focal = sqrt(dist_hor * dist_dir);
+
+	CvPoint2D32f m1, m2;
+	m1.x = hor_Point.x - p.x;
+	m1.y = hor_Point.y - p.y;
+	m2.x = dir_Point.x - p.x;
+	m2.y = dir_Point.y - p.y;
+	float sp = (m1.x * m2.x) + (m1.y * m2.y);
+	float focal = sqrt(abs(sp));
+
+
+	CvPoint3D32f U, V, P;
+
+	U.x = hor_Point.x;
+	U.y = hor_Point.y;
+	U.z = focal;
+
+	V.x = dir_Point.x;
+	V.y = dir_Point.y;
+	V.z = focal;
+
+	P.x = p.x;
+	P.y = p.y;
+	P.z = 0;
+
+	CvPoint3D32f M1, M2;
+
+	M1.x = U.x - P.x;
+	M1.y = U.y - P.y;
+	M1.z = U.z - P.z;
+
+	M2.x = V.x - P.x;
+	M2.y = V.y - P.y;
+	M2.z = V.z - P.z;
+
+	W->x = (M1.y * M2.z) - (M1.z * M2.y);
+	W->y = (M1.z * M2.x) - (M1.x * M2.z);
+	float Wz = (M1.x * M2.y) - (M1.y * M2.x);
+
+	return focal;
 }
