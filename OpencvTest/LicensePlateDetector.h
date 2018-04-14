@@ -9,26 +9,17 @@
 #include <math.h>
 
 #include <Windows.h>
+#include "common.h"
 
 
 #define PLATE_TRACKS_VECTOR_SIZE 10
+#define DEGREE_IN_RADIAN 57.295779513f
+
+
 
 class LicensePlateDetector
 {
-
 public:
-
-	struct LINE {
-
-		float A = 0.0;
-		float B = 0.0;
-		float C = 0.0;
-
-		float k()  { return -(A / B); }
-		float b()  { return -(C / B); }
-		float y(float x) { return (x * k() + b()); }
-		float x(float y) { return (y - b()) / k(); }
-	};
 
 	struct PLATE_OBJECT {
 
@@ -56,6 +47,9 @@ public:
 
 		// Tracking
 		int owner_id = -1;
+		float owner_weight = 0.0;
+		float dirAngle = 0.0;
+		//float dy = 0.0;
 	};
 
 	struct PLATE_TRACK {
@@ -68,7 +62,6 @@ public:
 		};
 
 		LINE DirectionVanishLine;
-		int color = 0;
 		unsigned int lost_count = 0;
 		int id;
 		STATE state = STATE::ready;
@@ -91,7 +84,6 @@ public:
 	std::vector<LINE> horVanishLines;
 
 	unsigned int track_id = 0;
-
 
 
 // Methods
@@ -117,7 +109,7 @@ public:
 
 	int LicensePlateDetector::GetLineFromTwoPoints(CvPoint2D32f firstPoint, CvPoint2D32f secondPoint, LINE* line);
 
-	float LicensePlateDetector::ComputeFocalLenght(CvPoint2D32f hor_Point, CvPoint2D32f dir_Point, CvPoint2D32f *W);
+	
 
 	int LicensePlateDetector::FindLinesIntersections(std::vector<LINE> lines, std::vector<CvPoint2D32f> *result);	
 	int LicensePlateDetector::ProcessPlates(const char* filename);
@@ -129,6 +121,9 @@ public:
 	int LicensePlateDetector::FinishedTrackProccess();
 	void LicensePlateDetector::PrintTracks(PLATE_TRACK::STATE state);
 
+
+	
+	void LicensePlateDetector::ComputeRotationMatrix(float focal_lenght, CvPoint2D32f v1, CvPoint2D32f v2, CvPoint2D32f v3);
 
 	int LicensePlateDetector::PrintTrackDirectionVanishLine(PLATE_TRACK track,
 		int topYcoord, 
@@ -187,6 +182,16 @@ public:
 													   int rightxcoord // Right line point coordinate in pixels
 	);
 
+	// This method computes focal lenght from two vanishing points
+	float LicensePlateDetector::ComputeFocalLenght( CvPoint2D32f vp1, // Horizontal vanishing point
+													CvPoint2D32f vp2 // Depth vanihins point
+	);
+
+	// This method computes third vector from two vanishing points
+	CvPoint2D32f LicensePlateDetector::ComputeThirdVanishingPoint( CvPoint2D32f vp1, // Horizontal vanishing point
+																   CvPoint2D32f vp2, // Depth vanihins point
+																   float focal // Focal lenght
+	);
 
 };
 

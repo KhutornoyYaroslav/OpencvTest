@@ -1,4 +1,4 @@
-#include "stdafx.h"
+
 #include "Zebra.h"
 #include "RANSAC.h"
 
@@ -196,12 +196,12 @@ int BoxFilter(CvBox2D b, IplImage* image) {
 	relation = width / height;
 
 	//Фильтры по размерам
-	if (width < image->width / 75) return -1;
-	if (height < image->height / 75) return -1;
-	if (relation < 3) return -1;
-
-	//if (width > image->width / 6) return -1;
-	//if (height > image->height / 6) return -1;
+	if (width < image->width / 100) return -1;
+	if (height < image->height / 100) return -1;
+	if (relation < 2) return -1;
+	if (relation > 6) return -1;
+	if (width > image->width / 8) return -1;
+	if (height > image->height / 8) return -1;
 
 	//Фильтры по гистограмме
 
@@ -281,7 +281,7 @@ void DrawContourPoints(CvSeq* contour, IplImage* image) {
 
 		CV_READ_SEQ_ELEM(v_points[i], reader);
 
-		cvDrawCircle(image, v_points[i], 2, CV_RGB(255, 0, 0), 1, 8, 0);
+		cvDrawCircle(image, v_points[i], 2, CV_RGB(255, 0, 0), 12, 8, 0);
 	}
 }
 
@@ -299,11 +299,14 @@ void FindZebraContour(IplImage* image) {
 	cvConvertImage(image, gray, CV_BGR2GRAY);
 
 	//WndTreshold(gray, 100);
-	cvSmooth(gray, gray, CV_GAUSSIAN, 7, 7);
-	cvAdaptiveThreshold(gray, gray, 255, 0, 1, 25, 1.0);
-	//cvCanny(gray, gray, 205, 255, 3);
+	cvSmooth(gray, gray, CV_GAUSSIAN, 3, 3);
+	//cvAdaptiveThreshold(gray, gray, 255, 0, 1, 25, 1.0);
 
-	cvFindContours(gray, storage, &contours, sizeof(CvContour), 1, CV_CHAIN_APPROX_SIMPLE, cvPoint(0, 0));
+	cvThreshold(gray, gray, 145, 255, CV_THRESH_OTSU);
+
+	cvCanny(gray, gray, 185, 255, 3);
+
+	cvFindContours(gray, storage, &contours, sizeof(CvContour), 0, CV_CHAIN_APPROX_NONE, cvPoint(0, 0));
 	//contours = cvApproxPoly(contours, sizeof(CvContour), storage, CV_POLY_APPROX_DP, 3, 1);
 
 
@@ -326,24 +329,24 @@ void FindZebraContour(IplImage* image) {
 		if (BoxFilter(b, image) == -1) continue;
 
 		//DrawRotatedRect(image, b, CV_RGB(255, 20, 120), 1);
-		CvRect rect = cvBoundingRect(i, 0);
+		//CvRect rect = cvBoundingRect(i, 0);
 		//cvDrawRect(image, CvPoint(rect.x, rect.y), CvPoint(rect.x + rect.width, rect.y + rect.height), CV_RGB(0, 255, 0), 1, 8, 0);
 
-		retHulls = cvApproxPoly(retHulls, sizeof(CvContour), storage, CV_POLY_APPROX_DP, 10, 1);
+		retHulls = cvApproxPoly(retHulls, sizeof(CvContour), storage, CV_POLY_APPROX_DP, 4, 1);
 
 		
-		//if (retHulls->total != 4) continue;
+		if (retHulls->total != 4) continue;
 		//printf("retHulls->total = %i\n", retHulls->total);
 
-		if (FourPointsContourFilter(retHulls) == -1) continue;
+		//if (FourPointsContourFilter(retHulls) == -1) continue;
 
 		DrawContourPoints(retHulls, image);
 
 
-		//cvDrawContours(image, retHulls, CV_RGB(0, 0, 255), CV_RGB(0, 0, 255), 0, 1, 8);
+		cvDrawContours(image, retHulls, CV_RGB(0, 255, 0), CV_RGB(0, 255, 0), 0, 3, 8);
 
-		CvPoint kern4[120];
-		FindLines2(retHulls, kern4, 1);
+		//CvPoint kern4[120];
+		//FindLines2(retHulls, kern4, 1);
 	}
 
 	
@@ -353,18 +356,18 @@ void FindZebraContour(IplImage* image) {
 
 
 	//**************************************************************
-	double resize = 1.0;
-	if (image->width > 1280) resize = 0.5;
-	if (image->width < 720) resize = 2.0;
-	if (image->width < 400) resize = 4.0;
+	//double resize = 1.0;
+	//if (image->width > 1280) resize = 0.5;
+	//if (image->width < 720) resize = 2.0;
+	//if (image->width < 400) resize = 4.0;
 	
-	IplImage *lol = cvCreateImage(cvSize(gray->width * resize, gray->height * resize), gray->depth, gray->nChannels);
-	cvResize(gray, lol);
+	//IplImage *lol = cvCreateImage(cvSize(gray->width * resize, gray->height * resize), gray->depth, gray->nChannels);
+	//cvResize(gray, lol);
 	//cvShowImage("gray", lol);
 
 
-	IplImage *lol2 = cvCreateImage(cvSize(image->width * resize, image->height * resize), image->depth, image->nChannels);
-	cvResize(image, lol2);
-	cvShowImage("original", lol2);
+	//IplImage *lol2 = cvCreateImage(cvSize(image->width * resize, image->height * resize), image->depth, image->nChannels);
+	//cvResize(image, lol2);
+	//cvShowImage("original", lol2);
 
 }

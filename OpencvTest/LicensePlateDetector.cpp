@@ -1,6 +1,6 @@
-#include "stdafx.h"
-#include "LicensePlateDetector.h"
 
+#include "LicensePlateDetector.h"
+#include "Zebra.h"
 // ****************** GOOD METHODS *****************
 
 LicensePlateDetector::LicensePlateDetector() {
@@ -255,7 +255,7 @@ int LicensePlateDetector::FindPlateROI(CvRect ROI, CvSize minSize, CvSize maxSiz
 	//Detect plates
 	cvSetImageROI(grayImage, ROI);
 	//----- Debug code -----
-	cvDrawRect(this->colorImage, CvPoint(ROI.x, ROI.y), CvPoint(ROI.x + ROI.width, ROI.y + ROI.height), CV_RGB(0, 200, 255), 5, 8, 0);
+	//cvDrawRect(this->colorImage, CvPoint(ROI.x, ROI.y), CvPoint(ROI.x + ROI.width, ROI.y + ROI.height), CV_RGB(0, 200, 255), 5, 8, 0);
 	//CvFont font;
 	//cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX, 2.0, 2.0, 0, 2, CV_AA);
 	//cvPutText(this->colorImage, "Region of interest", CvPoint(ROI.x + 20, ROI.y - 20), &font, CV_RGB(0, 200, 255));
@@ -292,9 +292,9 @@ int LicensePlateDetector::FindPlateROI(CvRect ROI, CvSize minSize, CvSize maxSiz
 
 
 		//----- Debug code -----
-		cvDrawRect(this->colorImage, CvPoint(plateRoi.plateROIleftX, plateRoi.plateROIleftY),
-		CvPoint(plateRoi.plateROIleftX + plateRoi.plateROIwidth, plateRoi.plateROIleftY + plateRoi.plateROIheight),
-		 CV_RGB(0, 255, 125), 2, 8, 0);
+		//cvDrawRect(this->colorImage, CvPoint(plateRoi.plateROIleftX, plateRoi.plateROIleftY),
+		//CvPoint(plateRoi.plateROIleftX + plateRoi.plateROIwidth, plateRoi.plateROIleftY + plateRoi.plateROIheight),
+		// CV_RGB(0, 255, 125), 2, 8, 0);
 		//std::cout << "X: " << plateRoi.x_coord << " Y: " << plateRoi.y_coord 
 		//	<< " Width: " << plateRoi.width << " Height: " << plateRoi.height << std::endl;
 		//IplImage *scaleimg = cvCreateImage(cvSize(plateRoi.width * 4, plateRoi.height * 4), plateRoi.plateImage->depth, plateRoi.plateImage->nChannels);
@@ -385,6 +385,7 @@ int LicensePlateDetector::FindVanishPointMinDistances(std::vector<LINE> lines, C
 
 		for (int j = 0; j < lines.size(); j++) {
 
+			//TODO: упроситить код. дистанцию через линию сделать (структкура метод)
 			float A = lines.at(j).A;
 			float B = lines.at(j).B;
 			float C = lines.at(j).C;
@@ -476,6 +477,44 @@ int LicensePlateDetector::PrintPlateVanishHorLine(PLATE_OBJECT plate, int leftXc
 	return 0;
 }
 
+float LicensePlateDetector::ComputeFocalLenght(CvPoint2D32f vp1, CvPoint2D32f vp2) {
+
+	float dist = 0.0;
+	float dist1 = 0.0;
+	float dist2 = 0.0;
+	CvPoint2D32f PrincipalPoint;
+	LINE horizont(vp1, vp2);
+
+	PrincipalPoint.x = static_cast<float>(colorImage->width / 2);
+	PrincipalPoint.y = static_cast<float>(colorImage->height / 2);
+
+	dist = horizont.dist2point(PrincipalPoint);
+
+	float dist1_pre = sqrt((PrincipalPoint.x - vp1.x)*(PrincipalPoint.x - vp1.x) + (PrincipalPoint.y - vp1.y)*(PrincipalPoint.y - vp1.y));
+	dist1 = sqrt(dist1_pre*dist1_pre - dist*dist);
+	
+	float dist2_pre = sqrt((PrincipalPoint.x - vp2.x)*(PrincipalPoint.x - vp2.x) + (PrincipalPoint.y - vp2.y)*(PrincipalPoint.y - vp2.y));
+	dist2 = sqrt(dist2_pre*dist2_pre - dist*dist);
+
+	//dist1 = sqrt((PrincipalPoint.x - vp1.x)*(PrincipalPoint.x - vp1.x) + (PrincipalPoint.y - vp1.y)*(PrincipalPoint.y - vp1.y));//TODO: не принципал...
+	//dist2 = sqrt((PrincipalPoint.x - vp2.x)*(PrincipalPoint.x - vp2.x) + (PrincipalPoint.y - vp2.y)*(PrincipalPoint.y - vp2.y));//TODO: не принципал...
+
+	return sqrt((dist1 * dist2) - dist*dist);
+}
+
+CvPoint2D32f LicensePlateDetector::ComputeThirdVanishingPoint(CvPoint2D32f vp1, CvPoint2D32f vp2, float focal) {
+
+	CvPoint2D32f thirdPoint;
+	CvPoint2D32f PrincipalPoint;
+
+	PrincipalPoint.x = static_cast<float>(colorImage->width / 2);
+	PrincipalPoint.y = static_cast<float>(colorImage->height / 2);
+	thirdPoint.x = ((vp1.y - PrincipalPoint.y) * focal) - (focal * (vp2.y - PrincipalPoint.y));
+	thirdPoint.y = (focal * (vp2.x - PrincipalPoint.x)) - ((vp1.x - PrincipalPoint.x) * focal);
+
+	return thirdPoint;
+}
+
 // ****************** METHODS IN PROCESS *****************
 
 
@@ -513,7 +552,7 @@ int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT *plate) {
 	for (CvSeq* current = contours; current != NULL; current = current->h_next) {
 
 		//TODO: что-то придумать здесь нормальное
-		if (current->total < 105) continue; // parameter 185
+		if (current->total < 185) continue; // parameter 185
 
 		//Reading of all points from current contour and saving its to vector.
 		points.clear();
@@ -534,7 +573,7 @@ int LicensePlateDetector::FindPlateHorizontalLines(PLATE_OBJECT *plate) {
 	}
 	
 	if (horizontalLineVector.size() == 0) return -1;
-	printf("horizontalLineVector.size() = %i\n", horizontalLineVector.size());
+	//printf("horizontalLineVector.size() = %i\n", horizontalLineVector.size());
 
 	if (this->FilterPlateHorizontalLines(horizontalLineVector, plate) < 0) return -1;
 	
@@ -591,7 +630,7 @@ int LicensePlateDetector::FilterPlateHorizontalLines(std::vector<LINE> lines, PL
 			
 
 			//Coarse filter
-			if (dist < 8.0 && angle < 0.01) { // parameter
+			if (dist < 8.0 && angle < 0.005) { // parameter
 
 				//float y_max = line_y.params[3];
 				//float y_min = line_i.params[3];
@@ -763,6 +802,14 @@ int LicensePlateDetector::FindProbablyPlateWidth(PLATE_OBJECT *plate) {
 	//cvLine(this->colorImage, CvPoint(x_min + plate->plateROIleftX, 0 + plate->plateROIleftY), CvPoint(x_min + plate->plateROIleftX, gray->height + plate->plateROIleftY), CV_RGB(0, 255, 0), 5, CV_AA, 0);
 	//cvLine(this->colorImage, CvPoint(x_max + plate->plateROIleftX, 0 + plate->plateROIleftY), CvPoint(x_max + plate->plateROIleftX, gray->height + plate->plateROIleftY), CV_RGB(0, 255, 0), 5, CV_AA, 0);
 
+	///////////////////////////////////////
+	//cvLine(plate->plateImage, CvPoint(x_min, 0 ), CvPoint(x_min , gray->height ), CV_RGB(255, 255, 255), 1, CV_AA, 0);
+	//cvLine(plate->plateImage, CvPoint(x_max, 0 ), CvPoint(x_max , gray->height ), CV_RGB(255, 255, 255), 1, CV_AA, 0);
+	//this->ShowImage(plate->plateImage, 4.0);
+	//cvWaitKey(0);
+	///////////////////////////////////////
+
+
 	//ќсвобождаем ресурсы
 	cvReleaseImage(&gray);
 	delete[] arr;
@@ -785,57 +832,104 @@ int LicensePlateDetector::ProcessPlates(const char* filename) {
 
 	this->plateVector.clear(); // TODO:
 
+	
+	res = this->FindPlateROI(CvRect(400,
+		200,
+		1300,
+		300),
+		cv::Size(60 * 1, 20 * 1), cv::Size(60 * 1, 20 * 1), 1.4, 0.1, 0.1);
+
+	res = this->FindPlateROI(CvRect(550,
+		500,
+		1400,
+		300),
+		cv::Size(60 * 1.5, 20 * 1.5), cv::Size(60 * 1.5, 20 * 1.5), 1.4, 0.1, 0.1);
+
 	res = this->FindPlateROI(CvRect(700,
-		600,
+			800,
+			1500,
+			800),
+			cv::Size(60 * 2, 20 * 2), cv::Size(60 * 2, 20 * 2), 1.99, 0.1, 0.1);
+
+
+	res = this->FindPlateROI(CvRect(900,
+		1600,
 		1500,
-		600),
-		cv::Size(60 * 2, 20 * 2), cv::Size(60 * 2, 20 * 2), 1.4, 0.1, 0.1);
+		400),
+		cv::Size(60 * 3, 20 * 3), cv::Size(60 * 3, 20 * 3), 1.99, 0.1, 0.1);
+
+	/*res = this->FindPlateROI(CvRect(700,
+		600,
+		1700,
+		700),
+		cv::Size(60 * 0.3, 20 * 0.3), cv::Size(60 * 2.0, 20 * 2.0), 1.3, 0.1, 0.1);*/
+
+	//res = this->FindPlateROI(CvRect(700,
+	//	900,
+	//	1600,
+	//	1100),
+	//	cv::Size(60 * 2, 20 * 2), cv::Size(60 * 2, 20 * 2), 1.4, 0.1, 0.1);
 
 
-	static CvPoint2D32f point;
-	static CvPoint2D32f point2;
 
 	this->ProcessTracks(&plateVector);
 	this->FinishedTrackProccess();
-
-	
-	if(horVanishLines.size() > 0) 
-	{
-		this->FindVanishPointMinDistances(horVanishLines, &point);
-		horVanishLines.clear();
-	}
-
-	
-	if (dirVanishLines.size() > 1)
-	{
-		this->FindVanishPointMinDistances(dirVanishLines, &point2);
-	}
-	
-	if (point.x != 0 && point2.x != 0) {
-
-		CvPoint2D32f W;
-		float focal = ComputeFocalLenght(point, point2, &W);
-		printf("*\n*\n*\n FOCAL = %.3f \n", focal);
-		printf("W.x = %.3f | W.y = %3.f \n *\n*\n*\n", W.x, W.y);
-
-		this->PrintVanishVectors(CvPoint(static_cast<int>(point.x), static_cast<int>(point.y)), 3);
-		this->PrintVanishVectors2(CvPoint(static_cast<int>(point2.x), static_cast<int>(point2.y)), 3);
-		this->PrintVanishVectors3(CvPoint(static_cast<int>(W.x), static_cast<int>(W.y)), 3);
-
-
-	}
-	
-	this->ShowColorImage(0.5);
-	cvWaitKey(0);
-
-
-
-
-	//this->PrintTracks(PLATE_TRACK::STATE::finished);
 	//this->PrintTracks(PLATE_TRACK::STATE::inprocess);
+	
+	
+	static CvPoint2D32f point;
+	static CvPoint2D32f point2;
+	static CvPoint2D32f W;
+	static float focal;
+	static int size = 0;
 
+	printf("____________________ vector directional size = %i\n", dirVanishLines.size());
+	printf("____________________ vector horizontal size = %i\n", horVanishLines.size());
+
+	if (dirVanishLines.size() != size)
+	{
+		size = dirVanishLines.size();
+		
+
+		//this->FindVanishPointMinDistances(horVanishLines, &point);
+		//this->FindVanishPointRANSAC(horVanishLines, &point, 300);
+		//this->FindVanishPointMinDistances(dirVanishLines, &point2);
+		//this->FindVanishPointRANSAC(dirVanishLines, &point2, 200);
+
+		//point.x = 14000;
+		//point.y = -50;
+
+		//focal = ComputeFocalLenght(point, point2);
+	//	W = ComputeThirdVanishingPoint(point, point2, focal);
+
+		printf("\n*** FOCAL = %.3f ***\n", focal);
+
+		//W.x = colorImage->width / 2 - 350;
+		//W.y = 15000.0;
+
+
+		//this->ComputeRotationMatrix(focal, point, point2, W);
+	}
+
+	//this->ComputeRotationMatrix(focal, point, point2, W);
+
+	//FindZebraContour(colorImage);
+
+	//this->PrintVanishVectors(CvPoint(static_cast<int>(point.x), static_cast<int>(point.y)), 3);
+	//this->PrintVanishVectors2(CvPoint(static_cast<int>(point2.x), static_cast<int>(point2.y)), 4);
+	//this->PrintVanishVectors3(CvPoint(static_cast<int>(W.x), static_cast<int>(W.y)), 3);
 	
 
+
+	this->ShowColorImage(0.5);
+	cvWaitKey(1);
+
+	//CvPoint2D32f p(0, 0);
+	//CvPoint2D32f l1(0, colorImage->height);
+	//CvPoint2D32f l2(colorImage->width, colorImage->height);
+	//LINE line(l1, l2);
+	//printf("--------- dist to point: %.3f\n", line.dist2point(p));
+	
 	return 0;
 }
 
@@ -905,7 +999,7 @@ int LicensePlateDetector::PrintVanishVectors2(CvPoint vanishPoint, int number) {
 			int x2 = vanishPoint.x;
 			int y2 = vanishPoint.y;
 
-			yy = y + 200;
+			yy = y - 150;
 			xx = static_cast<int>(((yy - y) * (x2 - x) / (y2 - y)) + x);
 
 			cvLine(this->colorImage, CvPoint(x, y), CvPoint(xx, yy), CV_RGB(0, 255, 0), 4, CV_AA, 0);
@@ -1019,10 +1113,11 @@ int LicensePlateDetector::CleanTrack(PLATE_TRACK* track) {
 	return 0;
 }
 
+
 int LicensePlateDetector::ProcessTracks(std::vector<PLATE_OBJECT> *new_plates) {
 
 	// «аполн€ем треки новыми точками
-	for (auto t : plateTracks)
+	for(auto *t : plateTracks)
 	{
 		if (t->state == PLATE_TRACK::STATE::ready ||
 			t->state == PLATE_TRACK::STATE::finished) continue;
@@ -1031,69 +1126,127 @@ int LicensePlateDetector::ProcessTracks(std::vector<PLATE_OBJECT> *new_plates) {
 		float tpx = trPlate.plateROIleftX + (trPlate.plateROIwidth / 2);
 		float tpy = trPlate.plateROIleftY + (trPlate.plateROIheight / 2);
 
-		float weight_min = 100000;
-		int index_min = -1;
+		float minWeight = 9999;
+		int minIndex = -1;
 
-		for(int i = 0; i < new_plates->size(); i++)
-		{
-			auto newPlate = new_plates->at(i);
+		for (int i = 0; i < new_plates->size(); i++)
+		{			
+			auto newPlate = &new_plates->at(i);
+			float npx = newPlate->plateROIleftX + (newPlate->plateROIwidth / 2);
+			float npy = newPlate->plateROIleftY + (newPlate->plateROIheight / 2);
 
-			float npx = newPlate.plateROIleftX + (newPlate.plateROIwidth / 2);
-			float npy = newPlate.plateROIleftY + (newPlate.plateROIheight / 2);
-
+			float dirAngle = 0.0;
+			if ((npx - tpx) == 0) dirAngle = 90.0;
+			dirAngle = DEGREE_IN_RADIAN * atan((npy - tpy) / (npx - tpx));
 			float dCoord = sqrt((tpx - npx)*(tpx - npx) + (tpy - npy)*(tpy - npy));
-			int dWidth = abs(trPlate.plateWidth - newPlate.plateWidth);
+			float dAngle = 0.0;
 
-			float compare_weight = (0.8f * dCoord) + (0.2f * dWidth);
-			printf("compare_weight = %.3f\n", compare_weight);
-			if (compare_weight > 100) continue; //TODO: ?
+			if (trPlate.dirAngle != 0.0f)
+				dAngle = abs(dirAngle - trPlate.dirAngle);
+			
+			float radius = static_cast<float>(newPlate->plateROIwidth) * 1.5f; // radius - max delta distance
 
-			if (compare_weight < weight_min) 
+			cvCircle(this->colorImage, CvPoint(npx, npy), radius, CV_RGB(255, 100, 0), 5, 8, 0); // debug
+
+			float compare_weight = ((0.85f * (dCoord / radius)) + (0.15f * (dAngle / 10))); // 10 - max delta angle
+
+			printf("CmpW = %.2f\n", compare_weight);
+			if (compare_weight > 1.0) continue;
+
+			if (compare_weight < minWeight)
 			{
-				weight_min = compare_weight;
-				index_min = i;
+				minWeight = compare_weight;
+				minIndex = i;
 			}
 		}
 
-		if(index_min > -1)
+		if (minIndex > -1) 
 		{
-			new_plates->at(index_min).owner_id = t->id;// TODO ?
-			t->points.push_back(new_plates->at(index_min));
-		}
-		else
-		{
-			t->lost_count++;
+			if (new_plates->at(minIndex).owner_id != -1)
+			{
+				if (new_plates->at(minIndex).owner_weight > minWeight)
+				{
+					new_plates->at(minIndex).owner_id = t->id;
+					new_plates->at(minIndex).owner_weight = minWeight;
+				}
+			}
+			else
+			{
+				new_plates->at(minIndex).owner_id = t->id;
+				new_plates->at(minIndex).owner_weight = minWeight;
+			}
 		}
 	}
+	
+	for (auto *t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::ready ||
+			t->state == PLATE_TRACK::STATE::finished) continue;
+
+		bool isAdded = false;
+
+		for(int i = 0; i < new_plates->size(); i++)
+		{
+			if (t->id == new_plates->at(i).owner_id)
+			{
+				t->points.push_back(new_plates->at(i));
+				isAdded = true;
+			}
+		}
+
+		if (!isAdded)
+			t->lost_count++;
+	}
+
+
+
+	// ќтладочна€ информаци€
+	for (auto *t : plateTracks)
+	{
+		if (t->state == PLATE_TRACK::STATE::ready ||
+			t->state == PLATE_TRACK::STATE::finished) continue;
+
+		printf("TrID: %i, LC: %i, PC: %i\n", t->id, t->lost_count, t->points.size());
+
+	}
+	printf("\n");
+
+
+
+
+
 
 	// ѕровер€ем, не закончилс€ ли трек
 	for (auto t : plateTracks)
 	{
-		if (t->lost_count > 10) // parameter
+		if (t->state == PLATE_TRACK::STATE::ready ||
+			t->state == PLATE_TRACK::STATE::finished) continue;
+
+		if (t->lost_count >= 40) // parameter
 		{
-			if (t->points.size() > 5) // parameter
+			if (t->points.size() >= 20) // parameter
 			{
 				t->state = PLATE_TRACK::STATE::finished;
 			}
 			else
 			{
 				CleanTrack(t);
-			}			
+			}
 		}
 	}
 
 	// —оздаем новые треки дл€ точек, которые не подход€т остальным трекам
-	for(int i = 0; i < new_plates->size(); i++)
+	for (int i = 0; i < new_plates->size(); i++)
 	{
 		PLATE_OBJECT p = new_plates->at(i);
 
 		if (p.owner_id < 0)
-		{		
-			PLATE_TRACK *new_track = CreateNewTrack();
+		{
+			PLATE_TRACK *new_track = CreateNewTrack(); //TODO: GetNewTrack()
 
 			if (!new_track)
 			{
-
+				printf("Error while executing ProcessTracks(). Cant create new PLATE_TRACK.\n");
 			}
 			else
 			{
@@ -1102,9 +1255,9 @@ int LicensePlateDetector::ProcessTracks(std::vector<PLATE_OBJECT> *new_plates) {
 		}
 	}
 
-	
 	return 0;
 }
+
 
 int LicensePlateDetector::FinishedTrackProccess() {
 
@@ -1112,25 +1265,10 @@ int LicensePlateDetector::FinishedTrackProccess() {
 	{
 		if (t->state == PLATE_TRACK::STATE::finished)
 		{
-			int count = 0;
-			// ќбработка горизонтальных линий
-			for (auto p : t->points)
-			{
-				this->FindProbablyPlateWidth(&p);
-				this->FindPlateHorizontalLines(&p);
-				this->PrintPlateVanishHorLine(p, 0, colorImage->width);
-
-				//if (p.isHorVanishLine && count == 3)
-				//{
-					horVanishLines.push_back(p.horVanishLine);
-					//count = 0;
-				//}
-				//count++;
-					
-			}
-
 			// ќбработка линии направлени€ движени€
 			std::vector<cv::Point> points;
+			points.clear();
+
 			for (auto p : t->points)
 			{
 				int x = static_cast<int>(p.plateROIleftX + p.plateROIwidth / 2);
@@ -1138,12 +1276,32 @@ int LicensePlateDetector::FinishedTrackProccess() {
 				points.push_back(cv::Point(x, y));
 			}
 
-			this->LineFitRANSAC(5.0, 0.6, 0.6, 0.8 * t->points.size(), points, &t->DirectionVanishLine); //TODO: обработку ошибки сделать
-			
+			// ≈сли траектори€ крива€
+			// TODO: какой тут первый параметр выбрать? может зависит от размера номера?
+			if (LineFitRANSAC(10.0, 0.6, 0.6, 0.9 * t->points.size(), points, &t->DirectionVanishLine) < 0) 
+			{
+				CleanTrack(t);
+				continue;
+			}
+
+			// ≈сли траектори€ пр€ма€, обрабатываем дальше
 			dirVanishLines.push_back(t->DirectionVanishLine);
 
-			this->PrintTrackDirectionVanishLine(*t, 0, colorImage->height);
-			this->PrintTracks(PLATE_TRACK::STATE::finished);
+
+			// ќбработка горизонтальных линий
+			for (auto p : t->points)
+			{
+				//this->FindProbablyPlateWidth(&p);
+				//this->FindPlateHorizontalLines(&p);
+				//this->PrintPlateVanishHorLine(p, 0, colorImage->width);
+				//horVanishLines.push_back(p.horVanishLine);					
+			}
+
+			//this->PrintTrackDirectionVanishLine(*t, 0, colorImage->height);
+			//this->PrintTracks(PLATE_TRACK::STATE::finished);
+		
+			//this->ShowColorImage(0.5);//
+			//cvWaitKey(2500);
 			CleanTrack(t);
 		}
 	}
@@ -1171,7 +1329,7 @@ void LicensePlateDetector::PrintTracks(PLATE_TRACK::STATE state) {
 		if (t->state == PLATE_TRACK::STATE::ready) r++;
 		if (t->state == PLATE_TRACK::STATE::inprocess) p++;
 	}
-	printf("***** Tracks info *****\nready = %i | inprocess: %i | finished: %i\n", r, p, f);
+	//printf("***** Tracks info *****\nready = %i | inprocess: %i | finished: %i\n", r, p, f);
 	
 
 	for (auto t : plateTracks)
@@ -1183,7 +1341,13 @@ void LicensePlateDetector::PrintTracks(PLATE_TRACK::STATE state) {
 				int x = static_cast<int>(p.plateROIleftX + p.plateROIwidth / 2);
 				int y = static_cast<int>(p.plateROIleftY + p.plateROIheight / 2);
 				cvCircle(this->colorImage, CvPoint(x, y), 8, CV_RGB(255, 100, 0), 5, 8, 0);
-				this->PrintPlateVanishHorLine(p, 0, this->colorImage->width);
+				//this->PrintPlateVanishHorLine(p, 0, this->colorImage->width);
+
+				CvFont font;
+				cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX, 1.0, 2.0, 0, 3, CV_AA);
+				char text[255];
+				sprintf_s(text, sizeof(text), "id: %i", t->id);
+				cvPutText(this->colorImage, text, CvPoint(x + 20, y - 20), &font, CV_RGB(255, 200, 200));
 			}
 		}
 	}
@@ -1238,52 +1402,99 @@ int LicensePlateDetector::PrintTrackDirectionVanishLine(PLATE_TRACK track, int t
 
 
 
-float LicensePlateDetector::ComputeFocalLenght(CvPoint2D32f hor_Point, CvPoint2D32f dir_Point, CvPoint2D32f *W) {
-
-	CvPoint2D32f p; // principal point on center of image
-	p.x = static_cast<float>(colorImage->width/2);
-	p.y = static_cast<float>(colorImage->height / 2);
-
-	//float dist_hor = sqrt((hor_Point.x - P.x)*(hor_Point.x - P.x) + (hor_Point.y - P.y)*(hor_Point.y - P.y));
-	//float dist_dir = sqrt((dir_Point.x - P.x)*(dir_Point.x - P.x) + (dir_Point.y - P.y)*(dir_Point.y - P.y));
-	//float focal = sqrt(dist_hor * dist_dir);
-
-	CvPoint2D32f m1, m2;
-	m1.x = hor_Point.x - p.x;
-	m1.y = hor_Point.y - p.y;
-	m2.x = dir_Point.x - p.x;
-	m2.y = dir_Point.y - p.y;
-	float sp = (m1.x * m2.x) + (m1.y * m2.y);
-	float focal = sqrt(abs(sp));
 
 
-	CvPoint3D32f U, V, P;
 
-	U.x = hor_Point.x;
-	U.y = hor_Point.y;
-	U.z = focal;
+void LicensePlateDetector::ComputeRotationMatrix(float focal_lenght, CvPoint2D32f v1, CvPoint2D32f v2, CvPoint2D32f v3) {
 
-	V.x = dir_Point.x;
-	V.y = dir_Point.y;
-	V.z = focal;
 
-	P.x = p.x;
-	P.y = p.y;
-	P.z = 0;
+	// X column
+	float R11 = v1.x / sqrt((v1.x * v1.x) + (v1.y * v1.y) + focal_lenght);
+	float R21 = v1.y / sqrt((v1.x * v1.x) + (v1.y * v1.y) + focal_lenght);
+	float R31 = focal_lenght / sqrt((v1.x * v1.x) + (v1.y * v1.y) + focal_lenght);
 
-	CvPoint3D32f M1, M2;
+	// Y column
+	float R12 = v2.x / sqrt((v2.x * v2.x) + (v2.y * v2.y) + focal_lenght);
+	float R22 = v2.y / sqrt((v2.x * v2.x) + (v2.y * v2.y) + focal_lenght);
+	float R32 = focal_lenght / sqrt((v2.x * v2.x) + (v2.y * v2.y) + focal_lenght);
 
-	M1.x = U.x - P.x;
-	M1.y = U.y - P.y;
-	M1.z = U.z - P.z;
+	// Z column
+	/*float R13 = v3.x / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);
+	float R23 = v3.y / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);
+	float R33 = focal_lenght / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);*/
 
-	M2.x = V.x - P.x;
-	M2.y = V.y - P.y;
-	M2.z = V.z - P.z;
+	//R12 = R12 / R32;
+	//R22 = R22 / R32;
+	//R32 = R32 / R32;
+	//float norm1 = sqrt(R11*R11 + R21*R21 + R31*R31);
+	//float norm2 = sqrt(R12*R12 + R22*R22 + R32*R32);
 
-	W->x = (M1.y * M2.z) - (M1.z * M2.y);
-	W->y = (M1.z * M2.x) - (M1.x * M2.z);
-	float Wz = (M1.x * M2.y) - (M1.y * M2.x);
+	//R11 = R11 / norm1;
+	//R21 = R21 / norm1;
+	//R31 = R31 / norm1;
 
-	return focal;
+	//R12 = R12 / norm2;
+	//R22 = R22 / norm2;
+	//R32 = R32 / norm2;
+
+	// Z column
+	float R13 = (R21 * R32 - R31 * R22);
+	float R23 = (R31 * R12 - R11 * R32);
+	float R33 = (R11 * R22 - R21 * R12);
+
+	//R21 = R21 / R11;
+	//R31 = R31 / R11;
+	//R11 = R11 / R11;
+
+	//R12 = R12 / R32;
+	//R22 = R22 / R32;
+	//R32 = R32 / R32;
+
+	//R13 = R13 / R33;
+	//R23 = R23 / R33;
+	//R33 = R33 / R33;
+
+
+
+
+	/*float R13 = v3.x / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);
+	float R23 = v3.y / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);
+	float R33 = focal_lenght / sqrt((v3.x * v3.x) + (v3.y * v3.y) + focal_lenght);*/
+
+
+
+
+	printf("R11 = %.3f | R12 = %.3f | R13 = %.3f\n", R11, R12, R13);
+	printf("R21 = %.3f | R22 = %.3f | R23 = %.3f\n", R21, R22, R23);
+	printf("R31 = %.3f | R32 = %.3f | R33 = %.3f\n", R31, R32, R33);
+
+	//printf("***** ZYX *****\n");
+	double cosYangle = sqrt(R11 * R11 + R21 * R21);
+	double rotXangle = atan2(R32, R33);
+	double rotZangle = atan2(R21, R11);
+	double rotYangle = atan2(-R31, cosYangle);
+
+	//double cosYangle = sqrt(R11 * R11 + R12 * R12);
+	//double rotXangle = atan2(R23, R33);
+	//double rotZangle = atan2(R12, R11);
+	//double rotYangle = atan2(-R13, cosYangle);
+
+
+
+
+
+	//printf("ay = %.2f | ", DEGREE_IN_RADIAN * rotYangle);
+	//printf("ax = %.2f | ", 90 - DEGREE_IN_RADIAN * rotXangle);
+	//printf("az = %.2f \n ", DEGREE_IN_RADIAN * rotZangle);
+
+	CvFont font;
+	cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX, 2.0, 3.0, 0, 6, CV_AA);
+	char text[255];
+	sprintf_s(text, sizeof(text), "Rotate: %.1f Sl: %.1f Roll: %.1f Focal: %.1f", DEGREE_IN_RADIAN * rotYangle,
+		90 - DEGREE_IN_RADIAN * rotXangle, 
+		DEGREE_IN_RADIAN * rotZangle,
+		focal_lenght);
+	//sprintf_s(text, sizeof(text), "Rotate: %.1f Roll: %.1f", DEGREE_IN_RADIAN * rotYangle, DEGREE_IN_RADIAN * rotZangle);
+
+	cvPutText(this->colorImage, text, CvPoint(200, 1600), &font, CV_RGB(255, 200, 45));
 }

@@ -1,4 +1,4 @@
-#include "stdafx.h"
+
 #include "RANSAC.h"
 // для коммита
 cv::Vec4f TotalLeastSquares(
