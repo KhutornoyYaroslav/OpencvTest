@@ -1,6 +1,6 @@
 
 #include "Zebra.h"
-#include "RANSAC.h"
+
 
 double FindLineAngle2(CvPoint p1, CvPoint p2) {
 

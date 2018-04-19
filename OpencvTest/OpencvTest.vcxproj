@@ -158,16 +158,15 @@
   <ItemGroup>
     <ClInclude Include="common.h" />
     <ClInclude Include="LicensePlateDetector.h" />
-    <ClInclude Include="RANSAC.h" />
     <ClInclude Include="targetver.h" />
-    <ClInclude Include="Tracker.h" />
+    <ClInclude Include="PlateTracker.h" />
     <ClInclude Include="Zebra.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="common.cpp" />
     <ClCompile Include="LicensePlateDetector.cpp" />
     <ClCompile Include="OpencvTest.cpp" />
-    <ClCompile Include="RANSAC.cpp" />
-    <ClCompile Include="Tracker.cpp" />
+    <ClCompile Include="PlateTracker.cpp" />
     <ClCompile Include="Zebra.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
