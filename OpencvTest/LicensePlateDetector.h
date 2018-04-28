@@ -11,40 +11,32 @@
 #include <Windows.h>
 #include "common.h"
 #include "PlateTracker.h"
+#include "Vanisher.h"
 
-#define DEGREE_IN_RADIAN 57.295779513f
+#define DEGREE_IN_RADIAN 57.295779513
+
+#define VANISH_RANSAC_RADIUS 300
 
 class LicensePlateDetector
 {
+
 public:
-
-
-	struct LINE_CANDIDATE {
-
-		LINE line1;
-		LINE line2;
-	};
-
-	cv::Mat colorImage;
-
-
-
-	cv::CascadeClassifier plateClassifierCascade;
-	std::vector<LICENSE_PLATE> plateVector;
-
-	std::vector<LINE> directionLines;
-	std::vector<PLATES_TRACK*> plateTracks;
-
-	std::vector<LINE> dirVanishLines;
-	std::vector<LINE> horVanishLines;
-
-	std::vector<LINE> upLines;
-	std::vector<LINE> downLines;
-
-
 
 	PlateTracker tracker;
 
+	cv::Mat colorImage;
+	cv::Mat preColorImage;
+
+	std::vector<LINE> roadDirectionLines;
+	std::vector<LINE> roadPerpendicularLines;
+
+
+	cv::Point2f roadDirectionVP;
+	cv::Point2f roadPerpendicularVP;
+	cv::Point2f zenithVP;
+
+	Vanisher xVanisher;
+	
 
 // Methods
 public:
@@ -59,21 +51,32 @@ public:
 	bool ShowImage(cv::Mat *image, const char *wndName, double scale);
 	void PrintVanishVector(cv::Point vanishPoint, int lenght, int number, int R, int G, int B);
 
+	float GetAngleBetweenVector(cv::Vec3f v1, cv::Vec3f v2);	//TODO: vectors
+	cv::Point2f GetThirdVanishPoint(float Beta, cv::Point2f pp, cv::Point2f vp1, cv::Point2f vp2);
+	cv::Vec3f GetLambdas(cv::Point2f pp, cv::Point2f vp1, cv::Point2f vp2, cv::Point2f vp3);
+	cv::Vec3f GetRotatation(cv::Point2f vp1, cv::Point2f vp2);
+
+	void GetCarsContours();
+	void PrintCarBound(std::vector<cv::Point> contour, cv::Mat *image);
+
+	void PrintIntersections(std::vector<cv::Point2f> intersecions, cv::Point2f vanish);
+	cv::Point2f FindVanishPoint(std::vector<cv::Point2f> intersecions, float sigma);
+
+	bool GetVanishLineFromPlate(LICENSE_PLATE *plate, LINE* line);
+	bool GetVanishLineFromCar(LICENSE_PLATE *plate, LINE* line, double angle);
 
 
-	bool FilterVanishLines(std::vector<LINE> *lines);
+	void ProcessRoadDirectionLines(std::vector<LINE> lines);
+	void ProcessRoadPerpendicularLines(std::map<float, LINE> *lines);
 
-	bool GetVanishLinesFromPlate(LICENSE_PLATE *plate, std::vector<LINE> *lines);
-	bool GetVanishLinesFromCarTrack(PLATES_TRACK *track, std::vector<LINE> *lines);
 
 	
 	bool FindLinesIntersections2(std::vector<LINE> lines1, std::vector<LINE> lines2, std::vector<cv::Point2f> *result);
-	bool FindVanishPointRANSAC2(std::vector<cv::Point2f> intersections, cv::Point2f *resultPoint, float radius);
+	int FindVanishPointRANSAC(std::vector<cv::Point2f> intersections, cv::Point2f *resultPoint, float radius);
 
 
-	int LicensePlateDetector::FindProbablyPlateWidth(LICENSE_PLATE *plate);
 	
-	int LicensePlateDetector::FindLinesIntersections(std::vector<LINE> lines, std::vector<cv::Point2f> *result);
+	bool LicensePlateDetector::FindLinesIntersections(std::vector<LINE> lines, std::vector<cv::Point2f> *result);
 
 	
 
@@ -87,17 +90,9 @@ public:
 
 
 
-	// This method finds two line intersection
-	int LicensePlateDetector::FindTwoLineIntersection( LINE l1, // First line
-													   LINE l2, // Second line
-													   cv::Point2f  *intersection // Point of lines intersection
-	);
 
-	// This method finds vanish point by RANSAC algorithm
-	int LicensePlateDetector::FindVanishPointRANSAC( std::vector<LINE> lines, // Vanishing lines
-													 cv::Point2f *resultPoint, // Result vanishing point
-												     float radius // Maximal radius from result point to others points in pixels
-	);
+
+
 	
 	// This method finds vanish point by minimal sum of distances from point to lines 
 	int LicensePlateDetector::FindVanishPointMinDistances( std::vector<LINE> lines, // Vanishing lines
